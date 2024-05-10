@@ -137,30 +137,6 @@ func TestSendResult(t *testing.T) {
 	}
 }
 
-/*func TestSendResult(t *testing.T) {
-	if os.Getenv("BE_CRASHER") == "1" {
-		result := NewCheckResult()
-		result.SetResult(OK, "Test Message")
-		result.SendResult()
-		return
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSendResult$", "--")
-	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
-	err := cmd.Run()
-	exitGetter := exiters[err.(*exec.ExitError).ExitCode()]
-	if exitGetter.GetExitCode() != OK.Int() {
-		t.Fatalf("Expected exit status %d, but found different", OK.Int())
-	}
-
-	if err != nil { // ExitError indicates unsuccessful execution
-		if e, ok := err.(*exec.ExitError); ok && !e.Success() {
-			t.Fatalf("Process ran with err %v, expected exit status 0", err)
-		} else {
-			t.Fatalf("Process ran with err %v, expected err to be nil", err)
-		}
-	}
-}*/
-
 type ExitGetter interface {
 	GetExitCode() int
 }
