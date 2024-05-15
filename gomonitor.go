@@ -26,7 +26,9 @@ type ExitCode int
 
 // OK indicates that everything is fine
 // Warning indicates that there is a potential issue, but it's not critical
-// Critical indicates that there is a serious issue that requires immediate attention
+//
+//	indicates that there is a serious issue that requires immediate attention
+//
 // Unknown indicates that the plugin was unable to determine the status of the check
 const (
 	// OK indicates that everything is fine
@@ -149,7 +151,7 @@ func (cr *CheckResult) SendResult() {
 		performanceDataStr := ""
 		for _, key := range cr.PerfOrder {
 			metric := cr.PerformanceData[key]
-			metricStr := fmt.Sprintf("'%s'=%v%s;%v;%v;%v;%v ",
+			metricStr := fmt.Sprintf("'%s'=%.2f%s;%.2f;%.2f;%.2f;%.2f ",
 				key, metric.Value, metric.UnitOM, metric.Warn, metric.Crit, metric.Min, metric.Max)
 			performanceDataStr += metricStr
 		}
