@@ -98,6 +98,7 @@ type PerformanceMetric struct {
 type CheckResult struct {
 	ExitCode
 	Message         string
+	PerfOrder       []string
 	PerformanceData map[string]PerformanceMetric
 	Format          string
 }
@@ -114,6 +115,7 @@ func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceM
 	if cr.PerformanceData == nil {
 		cr.PerformanceData = make(map[string]PerformanceMetric)
 	}
+	cr.PerfOrder = append(cr.PerfOrder, metricName)
 	cr.PerformanceData[metricName] = metric
 }
 
@@ -127,6 +129,16 @@ func (cr *CheckResult) UpdatePerformanceData(metricName string, metric Performan
 // If the PerformanceData map does not contain the specified metric, no action is taken.
 func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	delete(cr.PerformanceData, metricName)
+	index := -1
+	for i, name := range cr.PerfOrder {
+		if name == metricName {
+			index = i
+			break
+		}
+	}
+	if index != -1 {
+		cr.PerfOrder = append(cr.PerfOrder[:index], cr.PerfOrder[index+1:]...)
+	}
 }
 
 // SendResult will output the formatted message and exit with the appropriate exit code
@@ -135,7 +147,8 @@ func (cr *CheckResult) SendResult() {
 	// Check if there is performance data to return
 	if len(cr.PerformanceData) > 0 {
 		performanceDataStr := ""
-		for key, metric := range cr.PerformanceData {
+		for _, key := range cr.PerfOrder {
+			metric := cr.PerformanceData[key]
 			metricStr := fmt.Sprintf("'%s'=%v%s;%v;%v;%v;%v ",
 				key, metric.Value, metric.UnitOM, metric.Warn, metric.Crit, metric.Min, metric.Max)
 			performanceDataStr += metricStr
