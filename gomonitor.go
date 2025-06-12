@@ -14,6 +14,9 @@
    limitations under the License.
 */
 
+// Package gomonitor provides a framework for creating monitoring checks with Nagios-compatible exit codes
+// and performance data. It allows you to create check results, add performance metrics, and output the
+// results in a standardized format.
 package gomonitor
 
 import (
@@ -24,12 +27,7 @@ import (
 // ExitCode represents a Nagios exit code
 type ExitCode int
 
-// OK indicates that everything is fine
-// Warning indicates that there is a potential issue, but it's not critical
-//
-//	indicates that there is a serious issue that requires immediate attention
-//
-// Unknown indicates that the plugin was unable to determine the status of the check
+// Status constants represent the possible states of a monitoring check.
 const (
 	// OK indicates that everything is fine
 	OK ExitCode = iota
@@ -103,6 +101,8 @@ type CheckResult struct {
 	PerfOrder       []string
 	PerformanceData map[string]PerformanceMetric
 	Format          string
+	// Map to store indices of performance metrics for efficient deletion
+	perfIndexMap    map[string]int
 }
 
 // SetResult sets the ExitCode and Message fields of the CheckResult to the provided values.
@@ -116,8 +116,15 @@ func (cr *CheckResult) SetResult(ec ExitCode, msg string) {
 func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceMetric) {
 	if cr.PerformanceData == nil {
 		cr.PerformanceData = make(map[string]PerformanceMetric)
+		cr.PerfOrder = []string{}
+		cr.perfIndexMap = make(map[string]int)
 	}
-	cr.PerfOrder = append(cr.PerfOrder, metricName)
+
+	if _, exists := cr.PerformanceData[metricName]; !exists {
+		cr.PerfOrder = append(cr.PerfOrder, metricName)
+		cr.perfIndexMap[metricName] = len(cr.PerfOrder) - 1
+	}
+
 	cr.PerformanceData[metricName] = metric
 }
 
@@ -130,22 +137,30 @@ func (cr *CheckResult) UpdatePerformanceData(metricName string, metric Performan
 // DeletePerformanceData deletes the specified metric from the PerformanceData map of the CheckResult.
 // If the PerformanceData map does not contain the specified metric, no action is taken.
 func (cr *CheckResult) DeletePerformanceData(metricName string) {
-	delete(cr.PerformanceData, metricName)
-	index := -1
-	for i, name := range cr.PerfOrder {
-		if name == metricName {
-			index = i
-			break
-		}
+	if _, exists := cr.PerformanceData[metricName]; !exists {
+		return
 	}
-	if index != -1 {
-		cr.PerfOrder = append(cr.PerfOrder[:index], cr.PerfOrder[index+1:]...)
+
+	delete(cr.PerformanceData, metricName)
+
+	if index, exists := cr.perfIndexMap[metricName]; exists {
+		delete(cr.perfIndexMap, metricName)
+
+		// Remove the element from PerfOrder
+		lastElement := cr.PerfOrder[len(cr.PerfOrder)-1]
+		cr.PerfOrder[index] = lastElement
+		cr.perfIndexMap[lastElement] = index
+
+		// Resize the slice
+		cr.PerfOrder = cr.PerfOrder[:len(cr.PerfOrder)-1]
 	}
 }
 
-// SendResult will output the formatted message and exit with the appropriate exit code
-func (cr *CheckResult) SendResult() {
+// FormatResult formats the check result message with performance data, but does not exit the program.
+// This allows for more flexible usage of the library.
+func (cr *CheckResult) FormatResult() string {
 	output := fmt.Sprintf(cr.Format, cr.ExitCode.String(), cr.Message)
+
 	// Check if there is performance data to return
 	if len(cr.PerformanceData) > 0 {
 		performanceDataStr := ""
@@ -159,15 +174,25 @@ func (cr *CheckResult) SendResult() {
 		// Append performance data to the message
 		output = fmt.Sprintf("%s | %s", output, performanceDataStr)
 	}
+
+	return output
+}
+
+// SendResult outputs the formatted message and exits with the appropriate exit code.
+// This is a convenience method that combines FormatResult with os.Exit.
+func (cr *CheckResult) SendResult() {
+	output := cr.FormatResult()
 	fmt.Println(output)
 	os.Exit(cr.ExitCode.Int())
 }
 
-// NewCheckResult initializes a new check result
+// NewCheckResult initializes a new check result with default values.
 func NewCheckResult() *CheckResult {
 	return &CheckResult{
 		ExitCode:        OK,
 		Format:          "%s - %s",
 		PerformanceData: make(map[string]PerformanceMetric),
+		PerfOrder:       []string{},
+		perfIndexMap:    make(map[string]int),
 	}
 }
