@@ -1,3 +1,3 @@
 module github.com/dmabry/gomonitor
 
-go 1.22.3
+go 1.24.4
