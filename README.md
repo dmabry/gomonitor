@@ -50,6 +50,7 @@ import "github.com/dmabry/gomonitor"
 Here's a simple example of how to use gomonitor to create a monitoring plugin:
 
 ```go
+// Basic example of using gomonitor to create a monitoring plugin
 package main
 
 import (
@@ -73,6 +74,7 @@ func main() {
 You can also add performance data to your check results:
 
 ```go
+// Example of using gomonitor with performance data
 package main
 
 import (
@@ -83,14 +85,14 @@ func main() {
     // Create a new check result
     result := gomonitor.NewCheckResult()
 
-    // Add performance data
+    // Add performance data for response time metric
     metric := gomonitor.PerformanceMetric{
-        Value:  1.23,
-        Warn:   1.00,
-        Crit:   2.00,
-        Min:    0.00,
-        Max:    10.00,
-        UnitOM: "ms",
+        Value:  1.23,  // Current value of the metric
+        Warn:   1.00,  // Threshold for warning state
+        Crit:   2.00,  // Threshold for critical state
+        Min:    0.00,  // Minimum expected value
+        Max:    10.00, // Maximum expected value
+        UnitOM: "ms",  // Unit of measure (milliseconds)
     }
     result.AddPerformanceData("response_time", metric)
 
@@ -109,6 +111,7 @@ func main() {
 The `ExitCode` type represents a Nagios exit code.
 
 ```go
+// ExitCode defines the possible return values for monitoring checks
 type ExitCode int
 
 const (
@@ -124,12 +127,13 @@ const (
 The `CheckResult` type represents the result of a monitoring check.
 
 ```go
+// CheckResult holds the outcome of a monitoring check
 type CheckResult struct {
-    ExitCode        gomonitor.ExitCode
-    Message         string
-    PerfOrder       []string
-    PerformanceData map[string]gomonitor.PerformanceMetric
-    Format          string
+    ExitCode        gomonitor.ExitCode  // The exit code for the check
+    Message         string              // Human-readable message about the check status
+    PerfOrder       []string            // Order of performance metrics in output
+    PerformanceData map[string]gomonitor.PerformanceMetric // Metrics collected during the check
+    Format          string              // Output format (default: Nagios)
 }
 ```
 
@@ -148,6 +152,7 @@ type CheckResult struct {
 The `PerformanceMetric` type represents a performance metric.
 
 ```go
+// PerformanceMetric represents a performance data point with thresholds and units
 type PerformanceMetric struct {
     Value  float64 // The actual value of the metric
     Warn   float64 // Threshold for warning state
@@ -160,8 +165,17 @@ type PerformanceMetric struct {
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request on GitHub.
+We welcome contributions from the community! If you'd like to contribute, please:
+
+1. Open an issue to discuss a feature idea or report a bug
+2. Fork the repository and create a new branch for your changes
+3. Write clear commit messages and follow Go coding conventions
+4. Submit a pull request with a description of your changes
+
+Thank you for helping make gomonitor better!
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License, Version 2.0. You can find a copy of the license in the
+[LICENSE](https://github.com/dmabry/gomonitor/blob/main/LICENSE) file or at
+[www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0).
