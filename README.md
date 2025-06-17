@@ -20,7 +20,7 @@ gomonitor provides a framework for creating monitoring checks that follow the Na
   - [CheckResult](#checkresult)
   - [PerformanceMetric](#performancemetric)
 - [Contributing](#contributing)
-- [Code of Conduct](#code-of-conduct)
+
 - [License](#license)
 
 ## Features
@@ -348,12 +348,5 @@ Contributions are welcome! Here's how you can contribute to gomonitor:
 Please open an issue first to discuss any major changes before submitting a pull request.
 
 For more information on contributing, see the [CONTRIBUTING.md](CONTRIBUTING.md) file.
-We also have a [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) that we expect all contributors and users to follow.
-
-## Code of Conduct
-
-We expect all contributors and users to follow our [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Please review it to understand the standards of behavior we expect from the community.
-
-## License
 
 This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
