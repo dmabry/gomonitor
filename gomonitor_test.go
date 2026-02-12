@@ -156,6 +156,106 @@ func mockExit(code int) {
 	panic(fmt.Sprintf("exit %v", code))
 }
 
+func TestFormatResult(t *testing.T) {
+	testCases := []struct {
+		name     string
+		setup    func() *CheckResult
+		wantOK   bool
+		contains []string
+	}{
+		{
+			name: "NoPerfData_NoMetrics",
+			setup: func() *CheckResult {
+				r := NewCheckResult()
+				r.SetResult(OK, "Everything is fine")
+				return r
+			},
+			wantOK:   true,
+			contains: []string{"OK", "Everything is fine"},
+		},
+		{
+			name: "SinglePerfData_WithMetrics",
+			setup: func() *CheckResult {
+				r := NewCheckResult()
+				r.SetResult(Warning, "High latency detected")
+				r.AddPerformanceData("response_time", PerformanceMetric{
+					Value: 1.23, Warn: 1.00, Crit: 2.00, Min: 0.00, Max: 10.00, UnitOM: "ms",
+				})
+				return r
+			},
+			wantOK:   true,
+			contains: []string{"Warning", "High latency detected", "'response_time'=1.23"},
+		},
+		{
+			name: "MultiplePerfData_MultiMetrics",
+			setup: func() *CheckResult {
+				r := NewCheckResult()
+				r.SetResult(Critical, "CPU overloaded")
+				r.AddPerformanceData("cpu_usage", PerformanceMetric{Value: 95.0, Warn: 80.0, Crit: 90.0, Min: 0.0, Max: 100.0})
+				r.AddPerformanceData("memory_usage", PerformanceMetric{Value: 88.5, Warn: 85.0, Crit: 95.0, Min: 0.0, Max: 100.0})
+				return r
+			},
+			wantOK:   true,
+			contains: []string{"Critical", "CPU overloaded"},
+		},
+		{
+			name: "CustomFormatString",
+			setup: func() *CheckResult {
+				r := NewCheckResult()
+				r.Format = "[%s] %s (details: %%s)"
+				r.SetResult(Unknown, "Plugin unable to determine status")
+				return r
+			},
+			wantOK:   true,
+			contains: []string{"[Unknown]", "Plugin unable to determine status"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.setup()
+			output := result.FormatResult()
+
+			if tc.wantOK && output == "" {
+				t.Error("FormatResult returned empty string")
+			}
+
+			for _, c := range tc.contains {
+				if !containsString(output, c) {
+					t.Errorf("Output %q does not contain expected substring %q", output, c)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatResult_PerformanceData(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "Check passed")
+	r.AddPerformanceData("test_metric", PerformanceMetric{
+		Value: 42.5, Warn: 30.0, Crit: 50.0, Min: 0.0, Max: 100.0, UnitOM: "%",
+	})
+	output := r.FormatResult()
+
+	wantFormat := "'test_metric'=42.50%;30.00;50.00;0.00;100.00"
+	if !containsString(output, wantFormat) {
+		t.Errorf("Performance data format incorrect.\nGot: %s\nExpected substring: %s", output, wantFormat)
+	}
+}
+
+func containsString(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && findSubstringIndex(s, substr) >= 0
+}
+
+func findSubstringIndex(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
 func init() {
 	osExit = mockExit
 }
