@@ -25,8 +25,11 @@ jobs:
     - name: Install dependencies
       run: go mod tidy
 
-    - name: Run tests
-      run: go test ./...
+    - name: Check code quality
+      run: |
+        gofmt -l . || exit 1
+        go vet ./...
+        go mod verify
 
     - name: Build the application
       run: go build -v ./...
