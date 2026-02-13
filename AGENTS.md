@@ -78,3 +78,39 @@ This is a Go library providing Nagios-compatible monitoring:
 
 - Go version: 1.24.4 (from go.mod)
 - CI uses Ubuntu latest with actions/checkout@v3, actions/setup-go@v4
+
+## Releasing a New Version
+
+### Steps to release a new version:
+
+```bash
+# 1. Ensure all tests pass
+go test -v ./...
+
+# 2. Run code quality checks
+gofmt -l .
+go vet ./...
+go mod verify
+
+# 3. Create and push a git tag (semantic versioning required)
+git tag v1.0.0
+git push origin v1.0.0
+
+# 4. Create GitHub release with gh CLI (optional but recommended)
+gh release create v1.0.0 --repo dmabry/gomonitor -t "v1.0.0" -n "$(cat <<'EOF'
+## Summary
+
+Describe what's new in this release.
+
+## Changes
+
+- List of changes, features, or fixes
+EOF
+)"
+```
+
+### Versioning Guidelines
+
+- **Patch** (e.g., v1.0.0 -> v1.0.1): Bug fixes only
+- **Minor** (e.g., v1.0.0 -> v1.1.0): New features, backward compatible
+- **Major** (e.g., v1.0.0 -> v2.0.0): Breaking changes require import path update (`github.com/dmabry/gomonitor/v2`)
