@@ -102,7 +102,7 @@ type CheckResult struct {
 	PerformanceData map[string]PerformanceMetric
 	Format          string
 	// Map to store indices of performance metrics for efficient deletion
-	perfIndexMap    map[string]int
+	perfIndexMap map[string]int
 }
 
 // SetResult sets the ExitCode and Message fields of the CheckResult to the provided values.

@@ -1,9 +1,9 @@
 package gomonitor
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -137,25 +137,6 @@ func TestSendResult(t *testing.T) {
 	}
 }
 
-type ExitGetter interface {
-	GetExitCode() int
-}
-
-type exitStatus struct {
-	Code int
-}
-
-func (e *exitStatus) GetExitCode() int {
-	return e.Code
-}
-
-var exiters = make(map[int]ExitGetter)
-
-func mockExit(code int) {
-	exiters[code] = &exitStatus{code}
-	panic(fmt.Sprintf("exit %v", code))
-}
-
 func TestFormatResult(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -244,28 +225,5 @@ func TestFormatResult_PerformanceData(t *testing.T) {
 }
 
 func containsString(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && findSubstringIndex(s, substr) >= 0
-}
-
-func findSubstringIndex(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
-func init() {
-	osExit = mockExit
-}
-
-// Mock os.Exit for testing
-var osExit = func(code int) {
-	os.Exit(code)
-}
-
-// Mock fmt.Printf for testing
-var fmtPrintf = func(format string, a ...interface{}) (n int, err error) {
-	return fmt.Printf(format, a...)
+	return strings.Contains(s, substr)
 }
