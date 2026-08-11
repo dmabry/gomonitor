@@ -177,10 +177,14 @@ func main() {
 
     // Adjust output format based on verbosity
     if verbose > 0 {
-        result.Format = "%s - %s | %s"
+        result.Format = "%s: %s | %s"
     } else {
-        result.Format = "%s - %s"
+        result.Format = "%s: %s"
     }
+
+    // Disable the status prefix if the message already carries its own,
+    // e.g. to avoid doubling an "OK: ..." self-prefix.
+    // result.StatusPrefix = false
 
     // Output the result and exit with the appropriate exit code
     result.SendResult()
@@ -236,7 +240,7 @@ func main() {
     loadAvg, err := getLoadAverage()
     if err != nil {
         result := gomonitor.NewCheckResult()
-        result.SetResult(gomonitor.Unknown, fmt.Sprintf("UNKNOWN: %s", err))
+        result.SetResult(gomonitor.Unknown, fmt.Sprintf("%s", err))
         result.SendResult()
     }
 
@@ -245,13 +249,13 @@ func main() {
 
     if loadAvg > criticalThreshold {
         state = gomonitor.Critical
-        statusMsg = fmt.Sprintf("CRITICAL: Load average %.2f is above critical threshold %.2f", loadAvg, criticalThreshold)
+        statusMsg = fmt.Sprintf("Load average %.2f is above critical threshold %.2f", loadAvg, criticalThreshold)
     } else if loadAvg > warningThreshold {
         state = gomonitor.Warning
-        statusMsg = fmt.Sprintf("WARNING: Load average %.2f is above warning threshold %.2f", loadAvg, warningThreshold)
+        statusMsg = fmt.Sprintf("Load average %.2f is above warning threshold %.2f", loadAvg, warningThreshold)
     } else {
         state = gomonitor.OK
-        statusMsg = fmt.Sprintf("OK: Load average %.2f is below thresholds (warning=%.2f, critical=%.2f)", loadAvg, warningThreshold, criticalThreshold)
+        statusMsg = fmt.Sprintf("Load average %.2f is below thresholds (warning=%.2f, critical=%.2f)", loadAvg, warningThreshold, criticalThreshold)
     }
 
     result := gomonitor.NewCheckResult()
@@ -270,9 +274,9 @@ func main() {
 
     // Adjust output format based on verbosity
     if verbose > 0 {
-        result.Format = "%s - %s | %s"
+        result.Format = "%s: %s | %s"
     } else {
-        result.Format = "%s - %s"
+        result.Format = "%s: %s"
     }
 
     // Output the result and exit with the appropriate exit code
@@ -308,6 +312,7 @@ type CheckResult struct {
     PerfOrder       []string
     PerformanceData map[string]gomonitor.PerformanceMetric
     Format          string
+    StatusPrefix    bool // true by default; set false to omit the status prefix
 }
 ```
 

@@ -210,6 +210,50 @@ func TestFormatResult(t *testing.T) {
 	}
 }
 
+func TestFormatResult_DefaultFormatPrefix(t *testing.T) {
+	testCases := []struct {
+		name string
+		code ExitCode
+		want string
+	}{
+		{name: "OK", code: OK, want: "OK: Everything is fine"},
+		{name: "Warning", code: Warning, want: "Warning: Everything is fine"},
+		{name: "Critical", code: Critical, want: "Critical: Everything is fine"},
+		{name: "Unknown", code: Unknown, want: "Unknown: Everything is fine"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(tc.code, "Everything is fine")
+
+			if got := r.FormatResult(); got != tc.want {
+				t.Errorf("FormatResult got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatResult_StatusPrefixDisabled(t *testing.T) {
+	r := NewCheckResult()
+	r.StatusPrefix = false
+	r.SetResult(OK, "OK: Everything is fine")
+
+	if got := r.FormatResult(); got != "OK: Everything is fine" {
+		t.Errorf("FormatResult got %q, want %q (no status prefix prepended)", got, "OK: Everything is fine")
+	}
+
+	r2 := NewCheckResult()
+	r2.StatusPrefix = false
+	r2.SetResult(Warning, "High latency")
+	r2.AddPerformanceData("response_time", PerformanceMetric{
+		Value: 1.23, Warn: 1.00, Crit: 2.00, Min: 0.00, Max: 10.00, UnitOM: "ms",
+	})
+	if got := r2.FormatResult(); !containsString(got, "High latency | 'response_time'=1.23") {
+		t.Errorf("FormatResult with perfdata got %q, want to contain %q", got, "High latency | 'response_time'=1.23")
+	}
+}
+
 func TestFormatResult_PerformanceData(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "Check passed")
