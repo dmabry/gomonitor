@@ -91,16 +91,20 @@ type PerformanceMetric struct {
 }
 
 // CheckResult represents the result of a Monitoring check.
-// - `ExitCode` is the exit code of the check, indicating the status of the check.
-// - `Message` is a descriptive message associated with the check result.
-// - `PerformanceData` is a map containing performance metrics associated with the check result.
-// - `Format` is the format string used to generate the output message.
+//   - `ExitCode` is the exit code of the check, indicating the status of the check.
+//   - `Message` is a descriptive message associated with the check result.
+//   - `PerformanceData` is a map containing performance metrics associated with the check result.
+//   - `Format` is the format string used to generate the output message.
+//   - `StatusPrefix` controls whether the exit code (e.g. "OK") is prepended to the output.
+//     It defaults to true. Set it to false when the message already carries its own status
+//     prefix to avoid doubling (e.g. "OK: CPU usage...").
 type CheckResult struct {
 	ExitCode
 	Message         string
 	PerfOrder       []string
 	PerformanceData map[string]PerformanceMetric
 	Format          string
+	StatusPrefix    bool
 	// Map to store indices of performance metrics for efficient deletion
 	perfIndexMap map[string]int
 }
@@ -159,7 +163,12 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 // FormatResult formats the check result message with performance data, but does not exit the program.
 // This allows for more flexible usage of the library.
 func (cr *CheckResult) FormatResult() string {
-	output := fmt.Sprintf(cr.Format, cr.ExitCode.String(), cr.Message)
+	var output string
+	if cr.StatusPrefix {
+		output = fmt.Sprintf(cr.Format, cr.ExitCode.String(), cr.Message)
+	} else {
+		output = cr.Message
+	}
 
 	// Check if there is performance data to return
 	if len(cr.PerformanceData) > 0 {
@@ -190,7 +199,8 @@ func (cr *CheckResult) SendResult() {
 func NewCheckResult() *CheckResult {
 	return &CheckResult{
 		ExitCode:        OK,
-		Format:          "%s - %s",
+		Format:          "%s: %s",
+		StatusPrefix:    true,
 		PerformanceData: make(map[string]PerformanceMetric),
 		PerfOrder:       []string{},
 		perfIndexMap:    make(map[string]int),
