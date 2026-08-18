@@ -157,11 +157,11 @@ func main() {
     value := getMetricValue() // Implement this function to get your metric value
 
     if value > criticalThreshold {
-        result.SetResult(gomonitor.Critical, "Critical: Value exceeds threshold")
+        result.SetResult(gomonitor.Critical, "Value exceeds threshold")
     } else if value > warningThreshold {
-        result.SetResult(gomonitor.Warning, "Warning: Value above warning threshold")
+        result.SetResult(gomonitor.Warning, "Value above warning threshold")
     } else {
-        result.SetResult(gomonitor.OK, "OK: Value within normal range")
+        result.SetResult(gomonitor.OK, "Value within normal range")
     }
 
     // Add performance data
@@ -175,21 +175,30 @@ func main() {
     }
     result.AddPerformanceData("metric_name", metric)
 
-    // Adjust output format based on verbosity
-    if verbose > 0 {
-        result.Format = "%s: %s | %s"
-    } else {
-        result.Format = "%s: %s"
-    }
-
-    // Disable the status prefix if the message already carries its own,
-    // e.g. to avoid doubling an "OK: ..." self-prefix.
-    // result.StatusPrefix = false
-
     // Output the result and exit with the appropriate exit code
     result.SendResult()
 }
 ```
+
+### Format and Status Prefix
+
+By default, `FormatResult()` prepends the status (e.g. `OK: `) to the message:
+
+```go
+result := gomonitor.NewCheckResult()
+result.SetResult(gomonitor.OK, "Everything is fine")
+fmt.Println(result.FormatResult()) // "OK: Everything is fine"
+```
+
+The `Format` field controls the template used when the status prefix is enabled. It supports two `%s` verbs: the first is replaced with the status string, the second with the message. Any other `%` in the template is preserved literally — no escaping needed:
+
+```go
+result.Format = "[%s] %s (95% sure)"
+result.SetResult(gomonitor.Warning, "High latency")
+fmt.Println(result.FormatResult()) // "[Warning] High latency (95% sure)"
+```
+
+If your message already carries its own status prefix (e.g. `"OK: Everything is fine"`), set `StatusPrefix` to `false` to avoid doubling it. Note that performance data is appended to the output automatically, so you should **not** add a `| %s` verb to your `Format` string.
 
 ### Complete Example: Load Average Check
 
@@ -272,13 +281,6 @@ func main() {
     }
     result.AddPerformanceData("load1", metric)
 
-    // Adjust output format based on verbosity
-    if verbose > 0 {
-        result.Format = "%s: %s | %s"
-    } else {
-        result.Format = "%s: %s"
-    }
-
     // Output the result and exit with the appropriate exit code
     result.SendResult()
 }
@@ -323,7 +325,7 @@ type CheckResult struct {
 - `AddPerformanceData(metricName string, metric PerformanceMetric)` - Adds a performance metric to the check result
 - `UpdatePerformanceData(metricName string, metric PerformanceMetric)` - Updates an existing performance metric
 - `DeletePerformanceData(metricName string)` - Deletes a performance metric from the check result
-- `FormatResult() string` - Formats the check result message with performance data (does not exit)
+- `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally.
 - `SendResult()` - Outputs the formatted message and exits with the appropriate exit code
 
 ### PerformanceMetric

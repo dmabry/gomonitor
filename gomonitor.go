@@ -22,6 +22,7 @@ package gomonitor
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ExitCode represents a Nagios exit code
@@ -162,10 +163,16 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 
 // FormatResult formats the check result message with performance data, but does not exit the program.
 // This allows for more flexible usage of the library.
+//
+// The Format template supports the two verbs used by the default format
+// ("%s: %s"): %s is replaced with the status string, and the second %s is
+// replaced with the message. Any other '%' in the template is preserved
+// literally, so a template such as "[%s] %s (95% sure)" is safe without
+// escaping the percent as "%%".
 func (cr *CheckResult) FormatResult() string {
 	var output string
 	if cr.StatusPrefix {
-		output = fmt.Sprintf(cr.Format, cr.ExitCode.String(), cr.Message)
+		output = formatTemplate(cr.Format, cr.ExitCode.String(), cr.Message)
 	} else {
 		output = cr.Message
 	}
@@ -185,6 +192,29 @@ func (cr *CheckResult) FormatResult() string {
 	}
 
 	return output
+}
+
+// formatTemplate renders the Format template safely. It recognizes only the
+// two verbs used by this library — "%s" for status and "%s" for message —
+// and passes through every other '%' literally (no Sprintf interpretation,
+// so stray percents in a template cannot produce "%!s(MISSING)" garbage).
+func formatTemplate(template, status, message string) string {
+	// Fast path: templates without any percent (other than an escaped "%%")
+	// are returned unchanged, so they cannot accidentally consume arguments.
+	parts := strings.Split(template, "%s")
+	if len(parts) == 1 {
+		return template
+	}
+
+	var b strings.Builder
+	b.WriteString(parts[0])
+	b.WriteString(status)
+	for i := 1; i < len(parts)-1; i++ {
+		b.WriteString(parts[i])
+		b.WriteString(message)
+	}
+	b.WriteString(parts[len(parts)-1])
+	return b.String()
 }
 
 // SendResult outputs the formatted message and exits with the appropriate exit code.
