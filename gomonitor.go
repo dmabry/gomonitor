@@ -168,7 +168,8 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 // ("%s: %s"): %s is replaced with the status string, and the second %s is
 // replaced with the message. Any other '%' in the template is preserved
 // literally, so a template such as "[%s] %s (95% sure)" is safe without
-// escaping the percent as "%%".
+// escaping the percent as "%%". For backward compatibility, an explicit
+// "%%" in the template is still collapsed to a single "%".
 func (cr *CheckResult) FormatResult() string {
 	var output string
 	if cr.StatusPrefix {
@@ -198,12 +199,21 @@ func (cr *CheckResult) FormatResult() string {
 // two verbs used by this library — "%s" for status and "%s" for message —
 // and passes through every other '%' literally (no Sprintf interpretation,
 // so stray percents in a template cannot produce "%!s(MISSING)" garbage).
+// For backward compatibility, a "%%" in the template still collapses to a
+// single "%" (the previous Sprintf escape hatch).
 func formatTemplate(template, status, message string) string {
-	// Fast path: templates without any percent (other than an escaped "%%")
-	// are returned unchanged, so they cannot accidentally consume arguments.
 	parts := strings.Split(template, "%s")
+
+	// Collapse "%%" escapes in the template itself, matching the old
+	// Sprintf-based behavior. Status/message arguments are substituted
+	// afterwards, so percents in user content pass through untouched.
+	for i := range parts {
+		parts[i] = strings.ReplaceAll(parts[i], "%%", "%")
+	}
+
+	// Templates without any verb are returned as-is.
 	if len(parts) == 1 {
-		return template
+		return parts[0]
 	}
 
 	var b strings.Builder

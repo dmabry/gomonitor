@@ -51,6 +51,31 @@ func TestFormatResult_PercentInMessageWithPerfData(t *testing.T) {
 	}
 }
 
+// TestFormatResult_CustomFormatEscapedPercent ensures the old "%%" escape
+// hatch still works for backward compatibility with the Sprintf-based
+// implementation: "%%" in a custom Format collapses to a single "%".
+func TestFormatResult_CustomFormatEscapedPercent(t *testing.T) {
+	r := NewCheckResult()
+	r.Format = "[%s] %s (95%%)"
+	r.SetResult(Warning, "High latency")
+
+	if got := r.FormatResult(); got != "[Warning] High latency (95%)" {
+		t.Errorf("FormatResult got %q, want %q", got, "[Warning] High latency (95%)")
+	}
+}
+
+// TestFormatResult_PercentEscapeInMessage ensures "%%" inside the message
+// argument is preserved verbatim — only the template collapses "%%", never
+// the substituted values.
+func TestFormatResult_PercentEscapeInMessage(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "100%% sure")
+
+	if got := r.FormatResult(); got != "OK: 100%% sure" {
+		t.Errorf("FormatResult got %q, want %q", got, "OK: 100%% sure")
+	}
+}
+
 // TestFormatResult_CustomFormatLiteralPercent reproduces the footgun: a
 // literal (unescaped) "%" in a custom Format must not produce Sprintf
 // placeholder garbage such as "%!s(MISSING)".

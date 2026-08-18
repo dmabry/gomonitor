@@ -190,7 +190,7 @@ result.SetResult(gomonitor.OK, "Everything is fine")
 fmt.Println(result.FormatResult()) // "OK: Everything is fine"
 ```
 
-The `Format` field controls the template used when the status prefix is enabled. It supports two `%s` verbs: the first is replaced with the status string, the second with the message. Any other `%` in the template is preserved literally — no escaping needed:
+The `Format` field controls the template used when the status prefix is enabled. It supports two `%s` verbs: the first is replaced with the status string, the second with the message. Any other `%` in the template is preserved literally — no escaping needed (for backward compatibility, an explicit `%%` still collapses to a single `%`):
 
 ```go
 result.Format = "[%s] %s (95% sure)"
@@ -325,7 +325,7 @@ type CheckResult struct {
 - `AddPerformanceData(metricName string, metric PerformanceMetric)` - Adds a performance metric to the check result
 - `UpdatePerformanceData(metricName string, metric PerformanceMetric)` - Updates an existing performance metric
 - `DeletePerformanceData(metricName string)` - Deletes a performance metric from the check result
-- `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally.
+- `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally, and `%%` collapses to a single `%` for backward compatibility.
 - `SendResult()` - Outputs the formatted message and exits with the appropriate exit code
 
 ### PerformanceMetric
