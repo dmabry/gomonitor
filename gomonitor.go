@@ -21,6 +21,7 @@ package gomonitor
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
@@ -171,11 +172,12 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 // escaping the percent as "%%". For backward compatibility, an explicit
 // "%%" in the template is still collapsed to a single "%".
 func (cr *CheckResult) FormatResult() string {
+	message := sanitizeMessage(cr.Message)
 	var output string
 	if cr.StatusPrefix {
-		output = formatTemplate(cr.Format, cr.ExitCode.String(), cr.Message)
+		output = formatTemplate(cr.Format, cr.ExitCode.String(), message)
 	} else {
-		output = cr.Message
+		output = message
 	}
 
 	// Check if there is performance data to return
@@ -183,8 +185,14 @@ func (cr *CheckResult) FormatResult() string {
 		performanceDataStr := ""
 		for _, key := range cr.PerfOrder {
 			metric := cr.PerformanceData[key]
-			metricStr := fmt.Sprintf("'%s'=%.2f%s;%.2f;%.2f;%.2f;%.2f ",
-				key, metric.Value, metric.UnitOM, metric.Warn, metric.Crit, metric.Min, metric.Max)
+			metricStr := fmt.Sprintf("'%s'=%s%s;%s;%s;%s;%s ",
+				sanitizePerfToken(key),
+				formatPerfFloat(metric.Value),
+				sanitizePerfToken(metric.UnitOM),
+				formatPerfFloat(metric.Warn),
+				formatPerfFloat(metric.Crit),
+				formatPerfFloat(metric.Min),
+				formatPerfFloat(metric.Max))
 			performanceDataStr += metricStr
 		}
 
@@ -193,6 +201,43 @@ func (cr *CheckResult) FormatResult() string {
 	}
 
 	return output
+}
+
+// sanitizeMessage strips characters from a plugin message that would break
+// single-line Nagios output or allow output injection through the message:
+// line breaks and the '|' perfdata separator. Everything after the first '|'
+// is treated as perfdata by Nagios, so a '|' inside a message could forge
+// additional output lines.
+func sanitizeMessage(s string) string {
+	s = strings.ReplaceAll(s, "|", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
+// sanitizePerfToken strips characters that would corrupt the Nagios
+// performance-data syntax ('label'=value[UOM];warn;crit;min;max) or allow
+// injection through a metric label or unit of measure. The label is wrapped
+// in single quotes, so a literal quote cannot be escaped; a ';' or '|' would
+// shift the warn/crit fields or start a new perfdata token.
+func sanitizePerfToken(s string) string {
+	s = strings.ReplaceAll(s, "'", "")
+	s = strings.ReplaceAll(s, ";", "")
+	s = strings.ReplaceAll(s, "|", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
+// formatPerfFloat renders a perfdata numeric field with two decimal places,
+// or an empty string for non-finite values (NaN, +Inf, -Inf). Printing those
+// literally would emit "NaN"/"+Inf" tokens that corrupt Nagios perfdata
+// parsers; an empty field is valid Nagios syntax (e.g. an undefined threshold).
+func formatPerfFloat(f float64) string {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", f)
 }
 
 // formatTemplate renders the Format template safely. It recognizes only the
@@ -229,10 +274,23 @@ func formatTemplate(template, status, message string) string {
 
 // SendResult outputs the formatted message and exits with the appropriate exit code.
 // This is a convenience method that combines FormatResult with os.Exit.
+//
+// Note: os.Exit does not run deferred functions, so any cleanup registered
+// with defer in the calling program is skipped. Callers that need deferred
+// cleanup to run should print FormatResult() themselves and exit with the
+// value returned by ResultCode().
 func (cr *CheckResult) SendResult() {
 	output := cr.FormatResult()
 	fmt.Println(output)
-	os.Exit(cr.ExitCode.Int())
+	os.Exit(cr.ResultCode())
+}
+
+// ResultCode returns the integer exit code for the check result, matching
+// what SendResult would pass to os.Exit, but without printing or exiting the
+// program. This lets callers control termination themselves so that deferred
+// functions in their own code still run.
+func (cr *CheckResult) ResultCode() int {
+	return cr.ExitCode.Int()
 }
 
 // NewCheckResult initializes a new check result with default values.

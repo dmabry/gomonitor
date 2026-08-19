@@ -1,6 +1,7 @@
 package gomonitor
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -137,6 +138,30 @@ func TestSendResult(t *testing.T) {
 	}
 }
 
+func TestResultCode(t *testing.T) {
+	testCases := []struct {
+		name string
+		code ExitCode
+		want int
+	}{
+		{"Test OK", OK, 0},
+		{"Test Warning", Warning, 1},
+		{"Test Critical", Critical, 2},
+		{"Test Unknown", Unknown, 3},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(tc.code, "message")
+
+			if got := r.ResultCode(); got != tc.want {
+				t.Errorf("ResultCode got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatResult(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -265,6 +290,65 @@ func TestFormatResult_PerformanceData(t *testing.T) {
 	wantFormat := "'test_metric'=42.50%;30.00;50.00;0.00;100.00"
 	if !containsString(output, wantFormat) {
 		t.Errorf("Performance data format incorrect.\nGot: %s\nExpected substring: %s", output, wantFormat)
+	}
+}
+
+func TestFormatResult_SanitizesPerfData(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check\nok")
+	r.AddPerformanceData("label|with;bad'\nchar", PerformanceMetric{
+		Value: 1.0, Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0, UnitOM: "ms;injected",
+	})
+
+	got := r.FormatResult()
+
+	wantLabel := "'labelwithbadchar'=1.00msinjected;2.00;3.00;0.00;10.00"
+	if !strings.Contains(got, wantLabel) {
+		t.Errorf("FormatResult %q does not contain sanitized perfdata %q", got, wantLabel)
+	}
+	if !strings.Contains(got, "checkok") {
+		t.Errorf("FormatResult %q should have stripped newline from message", got)
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("FormatResult %q still contains an unsanitized newline", got)
+	}
+	if strings.Contains(got, "bad'") || strings.Contains(got, ";bad") || strings.Contains(got, "with|") {
+		t.Errorf("FormatResult %q still contains an unsanitized injected delimiter in the label", got)
+	}
+}
+
+func TestFormatResult_NonFinitePerfData(t *testing.T) {
+	testCases := []struct {
+		name   string
+		metric PerformanceMetric
+		want   string
+	}{
+		{
+			name:   "NaN value",
+			metric: PerformanceMetric{Value: math.NaN(), Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0},
+			want:   "'m'=;2.00;3.00;0.00;10.00",
+		},
+		{
+			name:   "Infinity thresholds",
+			metric: PerformanceMetric{Value: 1.0, Warn: math.Inf(1), Crit: math.Inf(-1), Min: 0.0, Max: 10.0},
+			want:   "'m'=1.00;;;0.00;10.00",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(OK, "check")
+			r.AddPerformanceData("m", tc.metric)
+
+			got := r.FormatResult()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("FormatResult %q does not contain expected perfdata %q", got, tc.want)
+			}
+			if strings.Contains(got, "NaN") || strings.Contains(got, "Inf") {
+				t.Errorf("FormatResult %q contains a non-finite token", got)
+			}
+		})
 	}
 }
 
