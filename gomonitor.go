@@ -223,9 +223,13 @@ func sanitizeMessage(s string) string {
 // performance-data syntax ('label'=value[UOM];warn;crit;min;max) or allow
 // injection through a metric label or unit of measure. The label is wrapped
 // in single quotes, so a literal quote cannot be escaped; a ';' or '|' would
-// shift the warn/crit fields or start a new perfdata token.
+// shift the warn/crit fields or start a new perfdata token; an '=' inside the
+// label is forbidden by the Nagios plugin guidelines ("Label can contain any
+// characters except equals sign or single quote") because it shifts the value
+// boundary for strict parsers.
 func sanitizePerfToken(s string) string {
 	s = strings.ReplaceAll(s, "'", "")
+	s = strings.ReplaceAll(s, "=", "")
 	s = strings.ReplaceAll(s, ";", "")
 	s = strings.ReplaceAll(s, "|", "")
 	s = strings.ReplaceAll(s, "\r", "")
