@@ -323,7 +323,7 @@ type CheckResult struct {
 - `NewCheckResult()` - Creates a new check result with default values
 - `SetResult(ec ExitCode, msg string)` - Sets the exit code and message for the check result
 - `AddPerformanceData(metricName string, metric PerformanceMetric)` - Adds a performance metric to the check result
-- `UpdatePerformanceData(metricName string, metric PerformanceMetric)` - Updates an existing performance metric
+- `UpdatePerformanceData(metricName string, metric PerformanceMetric)` - Adds or updates a performance metric. For a new metric name the metric is registered and appears in the output (identical to `AddPerformanceData`); for an existing name the value is replaced in place and its position in the output order is preserved.
 - `DeletePerformanceData(metricName string)` - Deletes a performance metric from the check result
 - `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally, and `%%` collapses to a single `%` for backward compatibility. To keep single-line Nagios output well-formed, the message is stripped of newlines and `|`, and performance metric labels/units are stripped of `'`, `;`, `|`, and newlines.
 - `SendResult()` - Outputs the formatted message and exits with the appropriate exit code. **Caution:** `os.Exit` skips deferred cleanup in the calling program; use `ResultCode()` and print `FormatResult()` yourself when deferred functions must run.

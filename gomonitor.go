@@ -134,10 +134,14 @@ func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceM
 	cr.PerformanceData[metricName] = metric
 }
 
-// UpdatePerformanceData updates the PerformanceData map of a CheckResult with the provided metric.
-// The metric is added to the PerformanceData map using the metricName as the key.
+// UpdatePerformanceData adds or updates a performance metric in the
+// CheckResult's PerformanceData map, registering new metric names in PerfOrder
+// so they appear in FormatResult output. If the PerformanceData map is nil, it
+// is initialized before the metric is stored. For an existing metric name the
+// value is replaced in place and its position in PerfOrder is preserved; for a
+// new name it is appended. Behavior is identical to AddPerformanceData.
 func (cr *CheckResult) UpdatePerformanceData(metricName string, metric PerformanceMetric) {
-	cr.PerformanceData[metricName] = metric
+	cr.AddPerformanceData(metricName, metric)
 }
 
 // DeletePerformanceData deletes the specified metric from the PerformanceData map of the CheckResult.
