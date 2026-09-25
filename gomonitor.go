@@ -98,8 +98,11 @@ type PerformanceMetric struct {
 //   - `PerformanceData` is a map containing performance metrics associated with the check result.
 //   - `Format` is the format string used to generate the output message.
 //   - `StatusPrefix` controls whether the exit code (e.g. "OK") is prepended to the output.
-//     It defaults to true. Set it to false when the message already carries its own status
-//     prefix to avoid doubling (e.g. "OK: CPU usage...").
+//     It is set to true by NewCheckResult. Note that a zero-value CheckResult
+//     (e.g. &CheckResult{Message: "..."}) has StatusPrefix false, so the
+//     status prefix is omitted; set it to true explicitly when building the
+//     struct by hand. Set it to false when the message already carries its own
+//     status prefix to avoid doubling (e.g. "OK: CPU usage...").
 type CheckResult struct {
 	ExitCode
 	Message         string
@@ -146,24 +149,51 @@ func (cr *CheckResult) UpdatePerformanceData(metricName string, metric Performan
 
 // DeletePerformanceData deletes the specified metric from the PerformanceData map of the CheckResult.
 // If the PerformanceData map does not contain the specified metric, no action is taken.
+//
+// After the delete, the metric name is absent from PerformanceData, PerfOrder,
+// and the internal index map, and the remaining metrics keep their relative
+// order with consistent bookkeeping. The last element of PerfOrder fills the
+// deleted slot; when the deleted metric is itself the last element the slice
+// is simply truncated (a swap would re-insert the deleted key). If PerfOrder
+// was modified externally through the exported field and no longer contains
+// the metric, the order slice is left alone rather than indexed out of range.
 func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	if _, exists := cr.PerformanceData[metricName]; !exists {
 		return
 	}
 
 	delete(cr.PerformanceData, metricName)
+	delete(cr.perfIndexMap, metricName)
 
-	if index, exists := cr.perfIndexMap[metricName]; exists {
-		delete(cr.perfIndexMap, metricName)
-
-		// Remove the element from PerfOrder
-		lastElement := cr.PerfOrder[len(cr.PerfOrder)-1]
-		cr.PerfOrder[index] = lastElement
-		cr.perfIndexMap[lastElement] = index
-
-		// Resize the slice
-		cr.PerfOrder = cr.PerfOrder[:len(cr.PerfOrder)-1]
+	// Locate the metric's position in PerfOrder. It may be absent when
+	// PerfOrder was modified externally through the exported field; in that
+	// case there is nothing to remove from the order slice.
+	index := -1
+	for i, name := range cr.PerfOrder {
+		if name == metricName {
+			index = i
+			break
+		}
 	}
+	if index < 0 {
+		return
+	}
+
+	// Replace the deleted slot with the last element so the remaining
+	// metrics keep their relative order. When the deleted metric is itself
+	// the last element, no swap is needed: swapping would move the deleted
+	// key onto itself and re-insert it into the index map.
+	last := len(cr.PerfOrder) - 1
+	if index != last {
+		lastElement := cr.PerfOrder[last]
+		cr.PerfOrder[index] = lastElement
+		if _, tracked := cr.perfIndexMap[lastElement]; tracked {
+			cr.perfIndexMap[lastElement] = index
+		}
+	}
+
+	// Resize the slice
+	cr.PerfOrder = cr.PerfOrder[:last]
 }
 
 // FormatResult formats the check result message with performance data, but does not exit the program.
@@ -248,9 +278,10 @@ func formatPerfFloat(f float64) string {
 	return fmt.Sprintf("%.2f", f)
 }
 
-// formatTemplate renders the Format template safely. It recognizes only the
-// two verbs used by this library — "%s" for status and "%s" for message —
-// and passes through every other '%' literally (no Sprintf interpretation,
+// formatTemplate renders the Format template safely. It substitutes the
+// message for a single-verb template and, for multi-verb templates, the
+// status for the first verb and the message for every subsequent verb —
+// every other '%' passes through literally (no Sprintf interpretation,
 // so stray percents in a template cannot produce "%!s(MISSING)" garbage).
 // For backward compatibility, a "%%" in the template still collapses to a
 // single "%" (the previous Sprintf escape hatch).
@@ -271,10 +302,19 @@ func formatTemplate(template, status, message string) string {
 
 	var b strings.Builder
 	b.WriteString(parts[0])
-	b.WriteString(status)
-	for i := 1; i < len(parts)-1; i++ {
-		b.WriteString(parts[i])
+	if len(parts) == 2 {
+		// A single-verb template receives the message: the message is the
+		// payload of the output and silently dropping it would hide the
+		// diagnostic text. The status is still conveyed by the exit code.
 		b.WriteString(message)
+	} else {
+		// The first verb is the status; every subsequent verb receives the
+		// message.
+		b.WriteString(status)
+		for i := 1; i < len(parts)-1; i++ {
+			b.WriteString(parts[i])
+			b.WriteString(message)
+		}
 	}
 	b.WriteString(parts[len(parts)-1])
 	return b.String()

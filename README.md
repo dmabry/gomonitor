@@ -190,7 +190,7 @@ result.SetResult(gomonitor.OK, "Everything is fine")
 fmt.Println(result.FormatResult()) // "OK: Everything is fine"
 ```
 
-The `Format` field controls the template used when the status prefix is enabled. It supports two `%s` verbs: the first is replaced with the status string, the second with the message. Any other `%` in the template is preserved literally — no escaping needed (for backward compatibility, an explicit `%%` still collapses to a single `%`):
+The `Format` field controls the template used when the status prefix is enabled. It supports the `%s` verb: the first `%s` is replaced with the status string and every subsequent `%s` with the message; a template with a single `%s` receives the message (so the diagnostic text is never silently dropped — the status is still conveyed by the exit code). Any other `%` in the template is preserved literally — no escaping needed (for backward compatibility, an explicit `%%` still collapses to a single `%`):
 
 ```go
 result.Format = "[%s] %s (95% sure)"
@@ -314,7 +314,7 @@ type CheckResult struct {
     PerfOrder       []string
     PerformanceData map[string]gomonitor.PerformanceMetric
     Format          string
-    StatusPrefix    bool // true by default; set false to omit the status prefix
+    StatusPrefix    bool // set true by NewCheckResult; zero-value structs have it false (no status prefix)
 }
 ```
 
