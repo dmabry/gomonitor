@@ -58,7 +58,7 @@ The GitHub workflow at `.github/workflows/go-test.yml` runs:
 
 ### Performance Data & Monitoring
 - Performance metrics follow Nagios plugin specification: `'label'=value[UOM];warn;crit;min;max`
-- Maintain insertion order for metrics via parallel slices (`PerfOrder`, `perfIndexMap`) for predictable output
+- Maintain insertion order for metrics via the `PerfOrder` slice for predictable output
 
 ## Project Structure Overview
 

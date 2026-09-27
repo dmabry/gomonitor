@@ -94,6 +94,9 @@ type PerformanceMetric struct {
 
 // CheckResult represents the result of a Monitoring check.
 //   - `ExitCode` is the exit code of the check, indicating the status of the check.
+//     It is embedded, so CheckResult also satisfies fmt.Stringer through
+//     promotion: printing a CheckResult with %s renders the exit status string
+//     (e.g. "OK"), not the message.
 //   - `Message` is a descriptive message associated with the check result.
 //   - `PerformanceData` is a map containing performance metrics associated with the check result.
 //   - `Format` is the format string used to generate the output message.
@@ -110,8 +113,6 @@ type CheckResult struct {
 	PerformanceData map[string]PerformanceMetric
 	Format          string
 	StatusPrefix    bool
-	// Map to store indices of performance metrics for efficient deletion
-	perfIndexMap map[string]int
 }
 
 // SetResult sets the ExitCode and Message fields of the CheckResult to the provided values.
@@ -121,17 +122,19 @@ func (cr *CheckResult) SetResult(ec ExitCode, msg string) {
 }
 
 // AddPerformanceData adds a performance metric to the CheckResult's PerformanceData map.
-// If the PerformanceData map is nil, it is initialized before adding the metric.
+// If the PerformanceData map or the PerfOrder slice is nil (e.g. on a
+// zero-value or partially hand-built CheckResult), each is initialized before
+// the metric is stored, so the method never panics on missing internal state.
 func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceMetric) {
 	if cr.PerformanceData == nil {
 		cr.PerformanceData = make(map[string]PerformanceMetric)
+	}
+	if cr.PerfOrder == nil {
 		cr.PerfOrder = []string{}
-		cr.perfIndexMap = make(map[string]int)
 	}
 
 	if _, exists := cr.PerformanceData[metricName]; !exists {
 		cr.PerfOrder = append(cr.PerfOrder, metricName)
-		cr.perfIndexMap[metricName] = len(cr.PerfOrder) - 1
 	}
 
 	cr.PerformanceData[metricName] = metric
@@ -150,20 +153,18 @@ func (cr *CheckResult) UpdatePerformanceData(metricName string, metric Performan
 // DeletePerformanceData deletes the specified metric from the PerformanceData map of the CheckResult.
 // If the PerformanceData map does not contain the specified metric, no action is taken.
 //
-// After the delete, the metric name is absent from PerformanceData, PerfOrder,
-// and the internal index map, and the remaining metrics keep their relative
-// order with consistent bookkeeping. The last element of PerfOrder fills the
-// deleted slot; when the deleted metric is itself the last element the slice
-// is simply truncated (a swap would re-insert the deleted key). If PerfOrder
-// was modified externally through the exported field and no longer contains
-// the metric, the order slice is left alone rather than indexed out of range.
+// After the delete, the metric name is absent from both PerformanceData and
+// PerfOrder, and the remaining metrics keep their relative order. The last
+// element of PerfOrder fills the deleted slot; when the deleted metric is
+// itself the last element the slice is simply truncated. If PerfOrder was
+// modified externally through the exported field and no longer contains the
+// metric, the order slice is left alone rather than indexed out of range.
 func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	if _, exists := cr.PerformanceData[metricName]; !exists {
 		return
 	}
 
 	delete(cr.PerformanceData, metricName)
-	delete(cr.perfIndexMap, metricName)
 
 	// Locate the metric's position in PerfOrder. It may be absent when
 	// PerfOrder was modified externally through the exported field; in that
@@ -180,16 +181,10 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	}
 
 	// Replace the deleted slot with the last element so the remaining
-	// metrics keep their relative order. When the deleted metric is itself
-	// the last element, no swap is needed: swapping would move the deleted
-	// key onto itself and re-insert it into the index map.
+	// metrics keep their relative order.
 	last := len(cr.PerfOrder) - 1
 	if index != last {
-		lastElement := cr.PerfOrder[last]
-		cr.PerfOrder[index] = lastElement
-		if _, tracked := cr.perfIndexMap[lastElement]; tracked {
-			cr.perfIndexMap[lastElement] = index
-		}
+		cr.PerfOrder[index] = cr.PerfOrder[last]
 	}
 
 	// Resize the slice
@@ -218,7 +213,14 @@ func (cr *CheckResult) FormatResult() string {
 	if len(cr.PerformanceData) > 0 {
 		performanceDataStr := ""
 		for _, key := range cr.PerfOrder {
-			metric := cr.PerformanceData[key]
+			metric, ok := cr.PerformanceData[key]
+			if !ok {
+				// PerfOrder may be modified externally through the
+				// exported field; skip names that are not in
+				// PerformanceData so a stale entry cannot render a
+				// zero-value metric.
+				continue
+			}
 			metricStr := fmt.Sprintf("'%s'=%s%s;%s;%s;%s;%s ",
 				sanitizePerfToken(key),
 				formatPerfFloat(metric.Value),
@@ -230,8 +232,10 @@ func (cr *CheckResult) FormatResult() string {
 			performanceDataStr += metricStr
 		}
 
-		// Append performance data to the message
-		output = fmt.Sprintf("%s | %s", output, performanceDataStr)
+		// Append performance data to the message. Each metric string ends
+		// with a separator space; the trailing space after the last metric
+		// is trimmed so the output ends cleanly.
+		output = fmt.Sprintf("%s | %s", output, strings.TrimRight(performanceDataStr, " "))
 	}
 
 	return output
@@ -349,6 +353,5 @@ func NewCheckResult() *CheckResult {
 		StatusPrefix:    true,
 		PerformanceData: make(map[string]PerformanceMetric),
 		PerfOrder:       []string{},
-		perfIndexMap:    make(map[string]int),
 	}
 }
