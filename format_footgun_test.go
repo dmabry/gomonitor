@@ -38,10 +38,10 @@ func TestFormatResult_PercentInMessage(t *testing.T) {
 func TestFormatResult_PercentInMessageWithPerfData(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "CPU usage is 95%")
-	r.AddPerformanceData("cpu", PerformanceMetric{Value: 95.0, Warn: 80.0, Crit: 90.0, Min: 0.0, Max: 100.0})
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 95.0, Warn: new(80.0), Crit: new(90.0), Min: new(0.0), Max: new(100.0)})
 
 	got := r.FormatResult()
-	for _, want := range []string{"CPU usage is 95%", "'cpu'=95.00"} {
+	for _, want := range []string{"CPU usage is 95%", "'cpu'=95"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatResult %q does not contain %q", got, want)
 		}

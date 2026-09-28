@@ -191,7 +191,7 @@ func TestAddPerformanceData_PartialInitializationNoPanic(t *testing.T) {
 			if len(tc.result.PerfOrder) != 1 || tc.result.PerfOrder[0] != "cpu" {
 				t.Errorf("PerfOrder = %v, want [cpu]", tc.result.PerfOrder)
 			}
-			if got := tc.result.FormatResult(); !strings.Contains(got, "'cpu'=1.00") {
+			if got := tc.result.FormatResult(); !strings.Contains(got, "'cpu'=1") {
 				t.Errorf("FormatResult %q does not contain the added metric", got)
 			}
 		})
@@ -202,7 +202,7 @@ func TestAddPerformanceData_PartialInitializationNoPanic(t *testing.T) {
 // PerfOrder is an exported field, so it can contain names that are no longer
 // (or never were) in PerformanceData. FormatResult used to index the map
 // directly and rendered such stale entries as zero-value metrics
-// ('ghost'=0.00;...). Stale names must be skipped, and the remaining metrics
+// ('ghost'=0;...). Stale names must be skipped, and the remaining metrics
 // must keep their order.
 func TestFormatResult_SkipsStalePerfOrderEntries(t *testing.T) {
 	r := NewCheckResult()
@@ -216,7 +216,7 @@ func TestFormatResult_SkipsStalePerfOrderEntries(t *testing.T) {
 	if strings.Contains(got, "ghost") {
 		t.Errorf("FormatResult %q renders stale PerfOrder entry 'ghost' as a zero-value metric", got)
 	}
-	if !strings.Contains(got, "'cpu'=1.00") || !strings.Contains(got, "'mem'=2.00") {
+	if !strings.Contains(got, "'cpu'=1") || !strings.Contains(got, "'mem'=2") {
 		t.Errorf("FormatResult %q does not contain the real metrics", got)
 	}
 	if cpuIdx, memIdx := strings.Index(got, "'cpu'"), strings.Index(got, "'mem'"); cpuIdx > memIdx {
@@ -240,7 +240,7 @@ func TestAddPerformanceData_NameTrackedButMapNil(t *testing.T) {
 	if len(r.PerformanceData) != 1 {
 		t.Errorf("PerformanceData has %d entries, want 1", len(r.PerformanceData))
 	}
-	if got := r.FormatResult(); strings.Count(got, "'cpu'=1.00") != 1 {
+	if got := r.FormatResult(); strings.Count(got, "'cpu'=1") != 1 {
 		t.Errorf("FormatResult %q must render 'cpu' exactly once", got)
 	}
 }

@@ -79,16 +79,23 @@ func (ec ExitCode) Int() int {
 }
 
 // PerformanceMetric represents a performance metric with various attributes.
-// - `Value` is the actual value of the metric.
-// - `Warn` and `Crit` are threshold values for warning and critical states respectively.
-// - `Min` and `Max` represent the minimum and maximum expected values of the metric.
-// - `UnitOM` is the unit of measure for the metric.
+//   - `Value` is the actual value of the metric.
+//   - `Warn` and `Crit` are optional threshold values for warning and critical
+//     states respectively. A nil pointer means the threshold is unset and it
+//     is omitted from FormatResult output, matching Icinga 2's PerfdataValue,
+//     which drops empty threshold fields; a zero-value metric therefore
+//     renders only its value. This is a breaking change from earlier
+//     releases, which used plain float64 fields that could not represent an
+//     unset threshold.
+//   - `Min` and `Max` represent the optional minimum and maximum expected
+//     values of the metric (nil to omit).
+//   - `UnitOM` is the unit of measure for the metric.
 type PerformanceMetric struct {
 	Value  float64
-	Warn   float64
-	Crit   float64
-	Min    float64
-	Max    float64
+	Warn   *float64
+	Crit   *float64
+	Min    *float64
+	Max    *float64
 	UnitOM string
 }
 
@@ -98,6 +105,14 @@ type PerformanceMetric struct {
 //     promotion: printing a CheckResult with %s renders the exit status string
 //     (e.g. "OK"), not the message.
 //   - `Message` is a descriptive message associated with the check result.
+//     It forms the short (first) line of the output.
+//   - `LongOutput` is optional multi-line text rendered after the first line,
+//     following the Nagios/Icinga plugin output convention: the first line is
+//     the short output, every subsequent line is long output (Icinga 2 stores
+//     it separately in CompatUtility::GetCheckResultLongOutput). FormatResult
+//     sanitizes it by stripping '\r' and '|' (a '|' followed by '=' on a
+//     long-output line would be parsed as a performance data token) and
+//     trimming trailing line breaks; '\n' is preserved as the line separator.
 //   - `PerformanceData` is a map containing performance metrics associated with the check result.
 //   - `Format` is the format string used to generate the output message.
 //   - `StatusPrefix` controls whether the exit code (e.g. "OK") is prepended to the output.
@@ -109,6 +124,7 @@ type PerformanceMetric struct {
 type CheckResult struct {
 	ExitCode
 	Message         string
+	LongOutput      string
 	PerfOrder       []string
 	PerformanceData map[string]PerformanceMetric
 	Format          string
@@ -206,6 +222,9 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 // FormatResult formats the check result message with performance data, but does not exit the program.
 // This allows for more flexible usage of the library.
 //
+// If LongOutput is set, it is appended after the first line as the long
+// output of the check, matching the Nagios/Icinga plugin output convention.
+//
 // The Format template supports the two verbs used by the default format
 // ("%s: %s"): %s is replaced with the status string, and the second %s is
 // replaced with the message. Any other '%' in the template is preserved
@@ -242,14 +261,11 @@ func (cr *CheckResult) FormatResult() string {
 				// suppressed along with the value.
 				unit = ""
 			}
-			metricStr := fmt.Sprintf("'%s'=%s%s;%s;%s;%s;%s ",
+			metricStr := fmt.Sprintf("'%s'=%s%s%s ",
 				sanitizePerfToken(key),
 				valueStr,
 				unit,
-				formatPerfFloat(metric.Warn),
-				formatPerfFloat(metric.Crit),
-				formatPerfFloat(metric.Min),
-				formatPerfFloat(metric.Max))
+				formatThresholds(metric.Warn, metric.Crit, metric.Min, metric.Max))
 			performanceDataStr += metricStr
 		}
 
@@ -265,7 +281,28 @@ func (cr *CheckResult) FormatResult() string {
 		}
 	}
 
+	// Append the long output. In the Nagios/Icinga plugin output format the
+	// first line is the short output (message and performance data) and every
+	// following line is long output; Icinga 2 keeps them separately in
+	// CompatUtility::GetCheckResultOutput and GetCheckResultLongOutput.
+	if long := sanitizeLongOutput(cr.LongOutput); long != "" {
+		output = fmt.Sprintf("%s\n%s", output, long)
+	}
+
 	return output
+}
+
+// sanitizeLongOutput strips characters from long output that would corrupt
+// the Nagios plugin output format or allow perfdata injection: '\r' (which
+// Icinga 2's ParseCheckOutput treats as a line separator) and the '|'
+// perfdata separator, since a '|' followed by '=' on a long-output line would
+// be parsed as a performance data token. '\n' is preserved as the line
+// separator; trailing line breaks are trimmed so the output ends cleanly.
+func sanitizeLongOutput(s string) string {
+	s = strings.ReplaceAll(s, "|", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.TrimRight(s, "\n")
+	return s
 }
 
 // sanitizeMessage strips characters from a plugin message that would break
@@ -298,15 +335,49 @@ func sanitizePerfToken(s string) string {
 	return s
 }
 
-// formatPerfFloat renders a perfdata numeric field with two decimal places,
-// or an empty string for non-finite values (NaN, +Inf, -Inf). Printing those
-// literally would emit "NaN"/"+Inf" tokens that corrupt Nagios perfdata
-// parsers; an empty field is valid Nagios syntax (e.g. an undefined threshold).
+// formatPerfFloat renders a perfdata numeric field the way Icinga 2 formats
+// doubles in Convert::ToString(double) (lib/base/convert.cpp): a whole number
+// renders without a decimal point, and a fractional number renders with six
+// decimal places. Non-finite values (NaN, +Inf, -Inf) render as an empty
+// string: printing those literally would emit "NaN"/"+Inf" tokens that
+// corrupt Nagios perfdata parsers, and an empty field is valid Nagios syntax.
 func formatPerfFloat(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return ""
 	}
-	return fmt.Sprintf("%.2f", f)
+	if f == math.Trunc(f) {
+		return fmt.Sprintf("%.0f", f)
+	}
+	return fmt.Sprintf("%.6f", f)
+}
+
+// formatThresholds renders the ;warn;crit;min;max section of a perfdata token
+// the way Icinga 2's PerfdataValue::Format does (lib/base/perfdatavalue.cpp):
+// unset (nil) fields between two set fields keep their position as an empty
+// field, while trailing unset fields are omitted entirely, so a metric with
+// only warn and crit set renders ";warn;crit" and a metric with no set field
+// renders no section at all. This keeps zero-value metrics from emitting
+// misleading "0.00" thresholds.
+func formatThresholds(warn, crit, min, max *float64) string {
+	fields := []*float64{warn, crit, min, max}
+	last := -1
+	for i, field := range fields {
+		if field != nil {
+			last = i
+		}
+	}
+	if last < 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, field := range fields[:last+1] {
+		b.WriteByte(';')
+		if field != nil {
+			b.WriteString(formatPerfFloat(*field))
+		}
+	}
+	return b.String()
 }
 
 // formatTemplate renders the Format template safely. It substitutes the

@@ -77,7 +77,7 @@ This is a Go library providing Nagios-compatible monitoring:
 
 ## Version & Compatibility
 
-- Go version: 1.24.4 (from go.mod)
+- Go version: 1.27 (from go.mod)
 - CI uses Ubuntu latest with actions/checkout@v7, actions/setup-go@v7
 
 ## Releasing a New Version

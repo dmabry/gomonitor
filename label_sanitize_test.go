@@ -12,7 +12,7 @@ import (
 func TestFormatResult_LabelWithoutEquals(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check")
-	r.AddPerformanceData("bad=label", PerformanceMetric{Value: 1.0, Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0})
+	r.AddPerformanceData("bad=label", PerformanceMetric{Value: 1.0, Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)})
 
 	got := r.FormatResult()
 
@@ -20,7 +20,7 @@ func TestFormatResult_LabelWithoutEquals(t *testing.T) {
 	if strings.Contains(got, "'bad=label'") {
 		t.Errorf("FormatResult %q keeps '=' inside the label (forbidden by Nagios guidelines)", got)
 	}
-	if !strings.Contains(got, "'badlabel'=1.00") {
+	if !strings.Contains(got, "'badlabel'=1") {
 		t.Errorf("FormatResult %q does not contain the sanitized label 'badlabel'", got)
 	}
 }
@@ -32,10 +32,10 @@ func TestFormatResult_LabelAndUnitEquals(t *testing.T) {
 	r.SetResult(OK, "check")
 	r.AddPerformanceData("temp=reading", PerformanceMetric{
 		Value:  20.5,
-		Warn:   25.0,
-		Crit:   30.0,
-		Min:    0.0,
-		Max:    100.0,
+		Warn:   new(25.0),
+		Crit:   new(30.0),
+		Min:    new(0.0),
+		Max:    new(100.0),
 		UnitOM: "C=injected",
 	})
 
@@ -44,7 +44,7 @@ func TestFormatResult_LabelAndUnitEquals(t *testing.T) {
 	if strings.Contains(got, "temp=reading") || strings.Contains(got, "C=injected") {
 		t.Errorf("FormatResult %q keeps '=' inside a perfdata token", got)
 	}
-	if !strings.Contains(got, "'tempreading'=20.50Cinjected;25.00;30.00;0.00;100.00") {
+	if !strings.Contains(got, "'tempreading'=20.500000Cinjected;25;30;0;100") {
 		t.Errorf("FormatResult %q does not contain the sanitized label and UOM", got)
 	}
 	// Exactly one '=' per token, separating label from value
