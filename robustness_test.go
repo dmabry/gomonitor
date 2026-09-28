@@ -1,14 +1,14 @@
 package gomonitor
 
 import (
+	"strings"
 	"testing"
 )
 
-// TestDeletePerformanceData_LastMetricNoGhostEntry pins the fix for the stale
-// index-map entry: deleting the last-added metric used to re-insert the
-// deleted key into perfIndexMap, breaking the invariant
-// len(perfIndexMap) == len(PerfOrder).
-func TestDeletePerformanceData_LastMetricNoGhostEntry(t *testing.T) {
+// TestDeletePerformanceData_LastMetricKeepsOrder pins the delete bookkeeping:
+// deleting the last-added metric removes it from both PerformanceData and
+// PerfOrder, keeping the invariant len(PerformanceData) == len(PerfOrder).
+func TestDeletePerformanceData_LastMetricKeepsOrder(t *testing.T) {
 	r := NewCheckResult()
 	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
 	r.AddPerformanceData("mem", PerformanceMetric{Value: 2})
@@ -16,25 +16,23 @@ func TestDeletePerformanceData_LastMetricNoGhostEntry(t *testing.T) {
 
 	r.DeletePerformanceData("disk")
 
-	if _, ghost := r.perfIndexMap["disk"]; ghost {
-		t.Errorf("deleted metric 'disk' still present in perfIndexMap: %v", r.perfIndexMap)
-	}
-	if len(r.perfIndexMap) != len(r.PerfOrder) {
-		t.Errorf("perfIndexMap len %d != PerfOrder len %d (invariant broken)", len(r.perfIndexMap), len(r.PerfOrder))
+	if len(r.PerformanceData) != len(r.PerfOrder) {
+		t.Errorf("PerformanceData len %d != PerfOrder len %d (invariant broken)", len(r.PerformanceData), len(r.PerfOrder))
 	}
 	wantOrder := []string{"cpu", "mem"}
 	for i, name := range wantOrder {
 		if r.PerfOrder[i] != name {
 			t.Errorf("PerfOrder[%d] = %q, want %q", i, r.PerfOrder[i], name)
 		}
-		if idx, ok := r.perfIndexMap[name]; !ok || idx != i {
-			t.Errorf("perfIndexMap[%q] = %d, want %d", name, idx, i)
+		if _, ok := r.PerformanceData[name]; !ok {
+			t.Errorf("PerformanceData missing %q after delete", name)
 		}
 	}
 }
 
 // TestDeletePerformanceData_MiddleMetricKeepsOrder ensures a middle delete
-// still swaps the last element into the deleted slot and reindexes it.
+// still swaps the last element into the deleted slot and keeps the remaining
+// metrics in their original relative order.
 func TestDeletePerformanceData_MiddleMetricKeepsOrder(t *testing.T) {
 	r := NewCheckResult()
 	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
@@ -43,8 +41,8 @@ func TestDeletePerformanceData_MiddleMetricKeepsOrder(t *testing.T) {
 
 	r.DeletePerformanceData("mem")
 
-	if len(r.perfIndexMap) != len(r.PerfOrder) {
-		t.Errorf("perfIndexMap len %d != PerfOrder len %d", len(r.perfIndexMap), len(r.PerfOrder))
+	if len(r.PerformanceData) != len(r.PerfOrder) {
+		t.Errorf("PerformanceData len %d != PerfOrder len %d", len(r.PerformanceData), len(r.PerfOrder))
 	}
 	wantOrder := []string{"cpu", "disk"}
 	for i, name := range wantOrder {
@@ -52,11 +50,8 @@ func TestDeletePerformanceData_MiddleMetricKeepsOrder(t *testing.T) {
 			t.Errorf("PerfOrder[%d] = %q, want %q", i, r.PerfOrder[i], name)
 		}
 	}
-	if idx := r.perfIndexMap["disk"]; idx != 1 {
-		t.Errorf("perfIndexMap[\"disk\"] = %d, want 1 (reindexed after swap)", idx)
-	}
-	if _, ok := r.perfIndexMap["mem"]; ok {
-		t.Errorf("deleted metric 'mem' still present in perfIndexMap: %v", r.perfIndexMap)
+	if _, ok := r.PerformanceData["mem"]; ok {
+		t.Errorf("deleted metric 'mem' still present in PerformanceData: %v", r.PerformanceData)
 	}
 }
 
@@ -163,18 +158,135 @@ func TestZeroValueCheckResultStatusPrefix(t *testing.T) {
 	}
 }
 
+// TestAddPerformanceData_PartialInitializationNoPanic pins the crash fix:
+// PerformanceData, PerfOrder, and StatusPrefix are exported, so callers can
+// build a CheckResult by hand with only some fields initialized. Add used to
+// skip its init block whenever PerformanceData was non-nil and then write to
+// a nil PerfOrder slice or assign into a nil internal map, panicking with
+// "assignment to entry in nil map". Every partially-initialized shape must
+// add the metric without panicking.
+func TestAddPerformanceData_PartialInitializationNoPanic(t *testing.T) {
+	testCases := []struct {
+		name   string
+		result *CheckResult
+	}{
+		{"map only", &CheckResult{PerformanceData: make(map[string]PerformanceMetric)}},
+		{"order only", &CheckResult{PerfOrder: []string{}}},
+		{"zero value", &CheckResult{}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					t.Fatalf("AddPerformanceData panicked on %s: %v", tc.name, rec)
+				}
+			}()
+
+			tc.result.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+
+			if len(tc.result.PerformanceData) != 1 {
+				t.Errorf("PerformanceData has %d entries, want 1", len(tc.result.PerformanceData))
+			}
+			if len(tc.result.PerfOrder) != 1 || tc.result.PerfOrder[0] != "cpu" {
+				t.Errorf("PerfOrder = %v, want [cpu]", tc.result.PerfOrder)
+			}
+			if got := tc.result.FormatResult(); !strings.Contains(got, "'cpu'=1.00") {
+				t.Errorf("FormatResult %q does not contain the added metric", got)
+			}
+		})
+	}
+}
+
+// TestFormatResult_SkipsStalePerfOrderEntries pins the ghost-metric fix:
+// PerfOrder is an exported field, so it can contain names that are no longer
+// (or never were) in PerformanceData. FormatResult used to index the map
+// directly and rendered such stale entries as zero-value metrics
+// ('ghost'=0.00;...). Stale names must be skipped, and the remaining metrics
+// must keep their order.
+func TestFormatResult_SkipsStalePerfOrderEntries(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+	r.AddPerformanceData("mem", PerformanceMetric{Value: 2})
+	r.PerfOrder = append(r.PerfOrder, "ghost") // external modification: stale name
+
+	got := r.FormatResult()
+
+	if strings.Contains(got, "ghost") {
+		t.Errorf("FormatResult %q renders stale PerfOrder entry 'ghost' as a zero-value metric", got)
+	}
+	if !strings.Contains(got, "'cpu'=1.00") || !strings.Contains(got, "'mem'=2.00") {
+		t.Errorf("FormatResult %q does not contain the real metrics", got)
+	}
+	if cpuIdx, memIdx := strings.Index(got, "'cpu'"), strings.Index(got, "'mem'"); cpuIdx > memIdx {
+		t.Errorf("FormatResult %q lost metric order after skipping stale entry", got)
+	}
+}
+
+// TestAddPerformanceData_NameTrackedButMapNil pins the duplicate-registration
+// fix: PerfOrder is exported, so a hand-built result can carry an order slice
+// with a nil map. AddPerformanceData used to consult only the map and append
+// the name again, so FormatResult rendered the metric twice. The name must be
+// registered exactly once.
+func TestAddPerformanceData_NameTrackedButMapNil(t *testing.T) {
+	r := &CheckResult{PerfOrder: []string{"cpu"}} // map nil, order pre-populated
+
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+
+	if len(r.PerfOrder) != 1 || r.PerfOrder[0] != "cpu" {
+		t.Errorf("PerfOrder = %v, want [cpu] (no duplicate registration)", r.PerfOrder)
+	}
+	if len(r.PerformanceData) != 1 {
+		t.Errorf("PerformanceData has %d entries, want 1", len(r.PerformanceData))
+	}
+	if got := r.FormatResult(); strings.Count(got, "'cpu'=1.00") != 1 {
+		t.Errorf("FormatResult %q must render 'cpu' exactly once", got)
+	}
+}
+
+// TestFormatResult_AllStaleEntriesOmitsPerfData pins the empty-perfdata fix:
+// when PerformanceData is non-empty but every PerfOrder entry is stale (e.g.
+// after an external modification), FormatResult used to emit a dangling
+// separator ("... | "). Nothing must be appended instead.
+func TestFormatResult_AllStaleEntriesOmitsPerfData(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+	r.PerfOrder = append(r.PerfOrder[:0], "ghost") // external modification: all stale
+
+	got := r.FormatResult()
+
+	if strings.Contains(got, "ghost") {
+		t.Errorf("FormatResult %q renders stale entry 'ghost'", got)
+	}
+	if strings.Contains(got, "|") {
+		t.Errorf("FormatResult %q emits an empty perfdata section with a dangling '|'", got)
+	}
+	if !strings.HasPrefix(got, "OK: check") {
+		t.Errorf("FormatResult %q lost the message", got)
+	}
+}
+
 // TestDeleteThenReAddKeepsConsistency exercises a delete/re-add cycle across
-// all positions, asserting the map/order/index invariant every time.
+// all positions, asserting the map/order invariant every time: PerfOrder and
+// PerformanceData have equal lengths, every ordered name exists in the map,
+// and PerfOrder contains no duplicates.
 func TestDeleteThenReAddKeepsConsistency(t *testing.T) {
 	assertConsistent := func(r *CheckResult, stage string) {
 		t.Helper()
-		if len(r.perfIndexMap) != len(r.PerfOrder) {
-			t.Fatalf("%s: perfIndexMap len %d != PerfOrder len %d", stage, len(r.perfIndexMap), len(r.PerfOrder))
+		if len(r.PerformanceData) != len(r.PerfOrder) {
+			t.Fatalf("%s: PerformanceData len %d != PerfOrder len %d", stage, len(r.PerformanceData), len(r.PerfOrder))
 		}
+		seen := make(map[string]int)
 		for i, name := range r.PerfOrder {
-			if idx, ok := r.perfIndexMap[name]; !ok || idx != i {
-				t.Fatalf("%s: perfIndexMap[%q] = %d, want %d", stage, name, idx, i)
+			if _, ok := r.PerformanceData[name]; !ok {
+				t.Fatalf("%s: PerfOrder[%d] = %q is missing from PerformanceData", stage, i, name)
 			}
+			if prev, dup := seen[name]; dup {
+				t.Fatalf("%s: PerfOrder contains duplicate %q at %d and %d", stage, name, prev, i)
+			}
+			seen[name] = i
 		}
 	}
 
@@ -197,7 +309,7 @@ func TestDeleteThenReAddKeepsConsistency(t *testing.T) {
 	r.DeletePerformanceData("d") // down to empty
 	assertConsistent(r, "after delete to empty")
 
-	if len(r.PerfOrder) != 0 || len(r.perfIndexMap) != 0 {
-		t.Errorf("expected empty order/index, got PerfOrder=%v perfIndexMap=%v", r.PerfOrder, r.perfIndexMap)
+	if len(r.PerfOrder) != 0 || len(r.PerformanceData) != 0 {
+		t.Errorf("expected empty order/map, got PerfOrder=%v PerformanceData=%v", r.PerfOrder, r.PerformanceData)
 	}
 }

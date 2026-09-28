@@ -352,6 +352,18 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 	}
 }
 
+func TestFormatResult_NoTrailingSpace(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.AddPerformanceData("m", PerformanceMetric{Value: 1, Warn: 2, Crit: 3, Min: 0, Max: 10})
+
+	got := r.FormatResult()
+	want := "OK: check | 'm'=1.00;2.00;3.00;0.00;10.00"
+	if got != want {
+		t.Errorf("FormatResult got %q, want %q (output must not end with a trailing space)", got, want)
+	}
+}
+
 func containsString(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
