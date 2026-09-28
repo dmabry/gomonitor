@@ -115,6 +115,14 @@ type PerformanceMetric struct {
 //     trimming trailing line breaks; '\n' is preserved as the line separator.
 //   - `PerformanceData` is a map containing performance metrics associated with the check result.
 //   - `Format` is the format string used to generate the output message.
+//   - `NormalizeUnits` enables Icinga 2-style unit-of-measure normalization
+//     (mirroring PerfdataValue::Parse followed by PerfdataValue::Format):
+//     each metric's value and set thresholds are multiplied by the unit's
+//     factor and the canonical short unit is rendered (e.g. "ms" scales by
+//     1/1000 and renders as "s", "KiB" scales by 1024 and renders as "B").
+//     The counter unit "c" renders as "c" without scaling; an unknown unit
+//     is dropped and the value kept, matching Icinga. Off by default: the
+//     plugin output conventionally keeps the units the author chose.
 //   - `StatusPrefix` controls whether the exit code (e.g. "OK") is prepended to the output.
 //     It is set to true by NewCheckResult. Note that a zero-value CheckResult
 //     (e.g. &CheckResult{Message: "..."}) has StatusPrefix false, so the
@@ -128,6 +136,7 @@ type CheckResult struct {
 	PerfOrder       []string
 	PerformanceData map[string]PerformanceMetric
 	Format          string
+	NormalizeUnits  bool
 	StatusPrefix    bool
 }
 
@@ -252,8 +261,14 @@ func (cr *CheckResult) FormatResult() string {
 				// zero-value metric.
 				continue
 			}
-			valueStr := formatPerfFloat(metric.Value)
 			unit := sanitizePerfToken(metric.UnitOM)
+			if cr.NormalizeUnits {
+				// Normalization derives the unit from the Icinga 2 UoM
+				// tables in uom.go, so the sanitizer does not apply to
+				// the rendered unit.
+				metric, unit = metric.normalized()
+			}
+			valueStr := formatPerfFloat(metric.Value)
 			if valueStr == "" {
 				// A non-finite value renders blank; emitting the unit
 				// right after '=' would put a non-numeric unit string in
