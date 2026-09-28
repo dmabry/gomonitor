@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -64,18 +66,7 @@ func (ec ExitCode) String() string {
 // - Unknown: 3
 // - For any other value, the integer value is the underlying value of the ExitCode.
 func (ec ExitCode) Int() int {
-	switch ec {
-	case OK:
-		return 0
-	case Warning:
-		return 1
-	case Critical:
-		return 2
-	case Unknown:
-		return 3
-	default:
-		return int(ec)
-	}
+	return int(ec)
 }
 
 // PerformanceMetric represents a performance metric with various attributes.
@@ -89,7 +80,9 @@ func (ec ExitCode) Int() int {
 //     unset threshold.
 //   - `Min` and `Max` represent the optional minimum and maximum expected
 //     values of the metric (nil to omit).
-//   - `UnitOM` is the unit of measure for the metric.
+//   - `UnitOM` is the unit of measure for the metric. A unit Icinga 2 cannot
+//     read back (one containing a digit, '.', ',', ';', '=' or whitespace)
+//     is dropped from the output, as Icinga drops units it does not know.
 type PerformanceMetric struct {
 	Value  float64
 	Warn   *float64
@@ -110,9 +103,10 @@ type PerformanceMetric struct {
 //     following the Nagios/Icinga plugin output convention: the first line is
 //     the short output, every subsequent line is long output (Icinga 2 stores
 //     it separately in CompatUtility::GetCheckResultLongOutput). FormatResult
-//     sanitizes it by stripping '\r' and '|' (a '|' followed by '=' on a
-//     long-output line would be parsed as a performance data token) and
-//     trimming trailing line breaks; '\n' is preserved as the line separator.
+//     sanitizes it by stripping '\r' and every '|' that is followed by an
+//     '=' on the same line (Icinga would parse the rest of that line as
+//     performance data) and trimming trailing line breaks; '\n' is preserved
+//     as the line separator and other pipes are kept.
 //   - `PerformanceData` is a map containing performance metrics associated with the check result.
 //   - `Format` is the format string used to generate the output message.
 //   - `NormalizeUnits` enables Icinga 2-style unit-of-measure normalization
@@ -121,8 +115,14 @@ type PerformanceMetric struct {
 //     factor and the canonical short unit is rendered (e.g. "ms" scales by
 //     1/1000 and renders as "s", "KiB" scales by 1024 and renders as "B").
 //     The counter unit "c" renders as "c" without scaling; an unknown unit
-//     is dropped and the value kept, matching Icinga. Off by default: the
-//     plugin output conventionally keeps the units the author chose.
+//     is dropped and the value kept, matching Icinga. Normalized numbers use
+//     Icinga's display format (six decimal places for fractions), so they are
+//     rounded, and a value that overflows when scaled renders as "U" where
+//     Icinga would print "inf". Off by default, and not needed for Icinga:
+//     Icinga normalizes perfdata itself when it parses the plugin output
+//     (the perfdata writers and Icinga DB's normalized_performance_data),
+//     while its raw performance_data keeps the units the author chose.
+//     Normalizing in the plugin only loses precision and the original units.
 //   - `StatusPrefix` controls whether the exit code (e.g. "OK") is prepended to the output.
 //     It is set to true by NewCheckResult. Note that a zero-value CheckResult
 //     (e.g. &CheckResult{Message: "..."}) has StatusPrefix false, so the
@@ -147,6 +147,13 @@ func (cr *CheckResult) SetResult(ec ExitCode, msg string) {
 }
 
 // AddPerformanceData adds a performance metric to the CheckResult's PerformanceData map.
+//
+// Icinga 2 treats "::" in a label as a check_multi prefix (SplitPerfdata):
+// once a label containing "::" is rendered, every following label without
+// "::" is stored with that prefix, so "app::rta" followed by "load" is stored
+// as "app::load". Give every label a prefix, or add unprefixed metrics first,
+// when mixing the two. A label that is empty after sanitizing is not rendered.
+//
 // If the PerformanceData map or the PerfOrder slice is nil (e.g. on a
 // zero-value or partially hand-built CheckResult), each is initialized before
 // the metric is stored, so the method never panics on missing internal state.
@@ -163,14 +170,7 @@ func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceM
 	// slice but nil map). Appending unconditionally would register the
 	// name twice and render the metric twice in FormatResult, so scan
 	// the order slice before appending.
-	tracked := false
-	for _, name := range cr.PerfOrder {
-		if name == metricName {
-			tracked = true
-			break
-		}
-	}
-	if _, exists := cr.PerformanceData[metricName]; !exists && !tracked {
+	if _, exists := cr.PerformanceData[metricName]; !exists && !slices.Contains(cr.PerfOrder, metricName) {
 		cr.PerfOrder = append(cr.PerfOrder, metricName)
 	}
 
@@ -191,11 +191,9 @@ func (cr *CheckResult) UpdatePerformanceData(metricName string, metric Performan
 // If the PerformanceData map does not contain the specified metric, no action is taken.
 //
 // After the delete, the metric name is absent from both PerformanceData and
-// PerfOrder, and the remaining metrics keep their relative order. The last
-// element of PerfOrder fills the deleted slot; when the deleted metric is
-// itself the last element the slice is simply truncated. If PerfOrder was
-// modified externally through the exported field and no longer contains the
-// metric, the order slice is left alone rather than indexed out of range.
+// PerfOrder, and the remaining metrics keep their relative order. If PerfOrder
+// was modified externally through the exported field and no longer contains
+// the metric, the order slice is left alone rather than indexed out of range.
 func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	if _, exists := cr.PerformanceData[metricName]; !exists {
 		return
@@ -206,26 +204,9 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 	// Locate the metric's position in PerfOrder. It may be absent when
 	// PerfOrder was modified externally through the exported field; in that
 	// case there is nothing to remove from the order slice.
-	index := -1
-	for i, name := range cr.PerfOrder {
-		if name == metricName {
-			index = i
-			break
-		}
+	if index := slices.Index(cr.PerfOrder, metricName); index >= 0 {
+		cr.PerfOrder = slices.Delete(cr.PerfOrder, index, index+1)
 	}
-	if index < 0 {
-		return
-	}
-
-	// Replace the deleted slot with the last element so the remaining
-	// metrics keep their relative order.
-	last := len(cr.PerfOrder) - 1
-	if index != last {
-		cr.PerfOrder[index] = cr.PerfOrder[last]
-	}
-
-	// Resize the slice
-	cr.PerfOrder = cr.PerfOrder[:last]
 }
 
 // FormatResult formats the check result message with performance data, but does not exit the program.
@@ -233,92 +214,149 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 //
 // If LongOutput is set, it is appended after the first line as the long
 // output of the check, matching the Nagios/Icinga plugin output convention.
+// When the first line would be blank and LongOutput is set, the status string
+// fills it: Icinga trims the output and skips leading empty lines, so a blank
+// first line would promote the first long-output line to the short output.
 //
 // The Format template supports the two verbs used by the default format
 // ("%s: %s"): %s is replaced with the status string, and the second %s is
 // replaced with the message. Any other '%' in the template is preserved
 // literally, so a template such as "[%s] %s (95% sure)" is safe without
 // escaping the percent as "%%". For backward compatibility, an explicit
-// "%%" in the template is still collapsed to a single "%".
+// "%%" in the template is still collapsed to a single "%". An empty Format
+// uses the default "%s: %s"; a template with no %s verb is rendered as-is,
+// without the message. The rendered line, template included, is stripped of
+// '|' and line breaks like the message.
+//
+// An ExitCode outside OK..Unknown renders as "Unknown", the state Icinga
+// records for it.
 func (cr *CheckResult) FormatResult() string {
-	message := sanitizeMessage(cr.Message)
-	var output string
+	status := cr.state().String()
+	output := cr.Message
 	if cr.StatusPrefix {
-		output = formatTemplate(cr.Format, cr.ExitCode.String(), message)
-	} else {
-		output = message
+		format := cr.Format
+		if format == "" {
+			format = defaultFormat
+		}
+		output = formatTemplate(format, status, output)
+	}
+	// Sanitize after templating so a '|' or line break in the Format
+	// template cannot corrupt the output any more than one in the message.
+	output = sanitizeMessage(output)
+
+	// Icinga trims the output with boost::algorithm::trim in the classic
+	// locale, so only ASCII whitespace makes the first line blank.
+	long := sanitizeLongOutput(cr.LongOutput)
+	if long != "" && strings.Trim(output, asciiSpace) == "" {
+		output = status
 	}
 
-	// Check if there is performance data to return
-	if len(cr.PerformanceData) > 0 {
-		performanceDataStr := ""
-		for _, key := range cr.PerfOrder {
-			metric, ok := cr.PerformanceData[key]
-			if !ok {
-				// PerfOrder may be modified externally through the
-				// exported field; skip names that are not in
-				// PerformanceData so a stale entry cannot render a
-				// zero-value metric.
-				continue
-			}
-			unit := sanitizePerfToken(metric.UnitOM)
-			if cr.NormalizeUnits {
-				// Normalization derives the unit from the Icinga 2 UoM
-				// tables in uom.go, so the sanitizer does not apply to
-				// the rendered unit.
-				metric, unit = metric.normalized()
-			}
-			valueStr := formatPerfFloat(metric.Value)
-			if valueStr == "" {
-				// A non-finite value renders blank; emitting the unit
-				// right after '=' would put a non-numeric unit string in
-				// the value position (e.g. 'm'=ms), so the unit is
-				// suppressed along with the value.
-				unit = ""
-			}
-			metricStr := fmt.Sprintf("'%s'=%s%s%s ",
-				sanitizePerfToken(key),
-				valueStr,
-				unit,
-				formatThresholds(metric.Warn, metric.Crit, metric.Min, metric.Max))
-			performanceDataStr += metricStr
+	// Append performance data to the message. Each metric is preceded by a
+	// separator space. When no metric renders (e.g. every PerfOrder entry is
+	// stale after an external modification, or every label is empty),
+	// nothing is appended rather than emitting an empty perfdata section
+	// with a dangling '|'.
+	var perf strings.Builder
+	for _, key := range cr.PerfOrder {
+		metric, ok := cr.PerformanceData[key]
+		if !ok {
+			// PerfOrder may be modified externally through the exported
+			// field; skip names that are not in PerformanceData so a stale
+			// entry cannot render a zero-value metric.
+			continue
 		}
-
-		// Append performance data to the message. Each metric string ends
-		// with a separator space; the trailing space after the last metric
-		// is trimmed so the output ends cleanly. When every PerfOrder
-		// entry was skipped (e.g. all stale after an external
-		// modification), nothing is appended rather than emitting an
-		// empty perfdata section with a dangling '|'.
-		performanceDataStr = strings.TrimRight(performanceDataStr, " ")
-		if performanceDataStr != "" {
-			output = fmt.Sprintf("%s | %s", output, performanceDataStr)
+		label := sanitizeLabel(key)
+		if label == "" {
+			// Icinga strips the quotes only from labels longer than two
+			// characters, so "''" would be stored as a literal label.
+			continue
 		}
+		perf.WriteByte(' ')
+		perf.WriteString(metric.format(label, cr.NormalizeUnits))
+	}
+	if perf.Len() > 0 {
+		output = output + " |" + perf.String()
 	}
 
 	// Append the long output. In the Nagios/Icinga plugin output format the
 	// first line is the short output (message and performance data) and every
 	// following line is long output; Icinga 2 keeps them separately in
 	// CompatUtility::GetCheckResultOutput and GetCheckResultLongOutput.
-	if long := sanitizeLongOutput(cr.LongOutput); long != "" {
-		output = fmt.Sprintf("%s\n%s", output, long)
+	if long != "" {
+		output = output + "\n" + long
 	}
 
 	return output
 }
 
+// format renders one perfdata token, 'label'=value[UOM];warn;crit;min;max.
+//
+// Normal output renders numbers losslessly (formatPerfFloat) with the unit the
+// author chose. With normalize set, the metric is first scaled to its
+// canonical unit and rendered exactly as Icinga 2's PerfdataValue::Format
+// would render it (formatIcingaFloat).
+func (m PerformanceMetric) format(label string, normalize bool) string {
+	var unit string
+	formatFloat := formatPerfFloat
+	if normalize {
+		// Normalization derives the unit from the Icinga 2 UoM tables in
+		// uom.go; units Icinga cannot parse are unknown there and dropped.
+		m, unit = m.normalized()
+		formatFloat = formatIcingaFloat
+	} else {
+		unit = perfUnit(m.UnitOM)
+	}
+
+	value := formatFloat(m.Value)
+	if value == "" {
+		// A non-finite value (including one that overflows when normalized)
+		// is rendered as "U", the Monitoring Plugins guideline for a value
+		// that could not be determined. The unit is suppressed so the value
+		// field stays a bare "U" rather than e.g. "Ums". Icinga rejects the
+		// token either way.
+		value = "U"
+		unit = ""
+	}
+
+	return "'" + label + "'=" + value + unit + formatThresholds(formatFloat, m.Warn, m.Crit, m.Min, m.Max)
+}
+
+// state returns the exit code Icinga records for the result. Icinga maps every
+// exit status other than 0, 1 and 2 to Unknown (PluginUtility::ExitStatusToState),
+// and for a status above 3 it appends "<Terminated with exit code N (0xN).>"
+// to the plugin output, which would corrupt the last perfdata token.
+func (cr *CheckResult) state() ExitCode {
+	if cr.ExitCode < OK || cr.ExitCode > Unknown {
+		return Unknown
+	}
+	return cr.ExitCode
+}
+
 // sanitizeLongOutput strips characters from long output that would corrupt
-// the Nagios plugin output format or allow perfdata injection: '\r' (which
-// Icinga 2's ParseCheckOutput treats as a line separator) and the '|'
-// perfdata separator, since a '|' followed by '=' on a long-output line would
-// be parsed as a performance data token. '\n' is preserved as the line
-// separator; trailing line breaks are trimmed so the output ends cleanly.
+// the Nagios plugin output format or allow perfdata injection. '\r' is
+// stripped because Icinga 2's ParseCheckOutput treats it as a line separator.
+// ParseCheckOutput splits a line at its first '|' only when an '=' follows it,
+// so every '|' that precedes the last '=' on a line is stripped and other
+// pipes are kept as text. '\n' is preserved as the line separator; trailing
+// line breaks are trimmed so the output ends cleanly.
 func sanitizeLongOutput(s string) string {
-	s = strings.ReplaceAll(s, "|", "")
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.TrimRight(s, "\n")
-	return s
+	if !strings.Contains(s, "|") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if eq := strings.LastIndexByte(line, '='); eq > 0 {
+			lines[i] = strings.ReplaceAll(line[:eq], "|", "") + line[eq:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
+
+// asciiSpace is the whitespace set of the C classic locale, which Icinga 2's
+// boost string algorithms use.
+const asciiSpace = " \t\n\v\f\r"
 
 // sanitizeMessage strips characters from a plugin message that would break
 // single-line Nagios output or allow output injection through the message:
@@ -332,38 +370,63 @@ func sanitizeMessage(s string) string {
 	return s
 }
 
-// sanitizePerfToken strips characters that would corrupt the Nagios
-// performance-data syntax ('label'=value[UOM];warn;crit;min;max) or allow
-// injection through a metric label or unit of measure. The label is wrapped
-// in single quotes, so a literal quote cannot be escaped; a ';' or '|' would
-// shift the warn/crit fields or start a new perfdata token; an '=' inside the
-// label is forbidden by the Nagios plugin guidelines ("Label can contain any
-// characters except equals sign or single quote") because it shifts the value
-// boundary for strict parsers.
-func sanitizePerfToken(s string) string {
+// sanitizeLabel strips the characters that neither Icinga 2 nor the Nagios
+// plugin guidelines allow in a perfdata label. Icinga's SplitPerfdata ends the
+// label at the first '=', and a line break would end the perfdata line. The
+// guidelines forbid "'" and escape it by doubling, which Icinga does not
+// unescape, so no encoding of a quote is correct for both; stripping it keeps
+// the output valid everywhere. Everything else, including ';' and '|', is
+// allowed by the guidelines and round-trips through Icinga.
+func sanitizeLabel(s string) string {
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "=", "")
-	s = strings.ReplaceAll(s, ";", "")
-	s = strings.ReplaceAll(s, "|", "")
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.ReplaceAll(s, "\n", "")
 	return s
 }
 
-// formatPerfFloat renders a perfdata numeric field the way Icinga 2 formats
-// doubles in Convert::ToString(double) (lib/base/convert.cpp): a whole number
-// renders without a decimal point, and a fractional number renders with six
-// decimal places. Non-finite values (NaN, +Inf, -Inf) render as an empty
-// string: printing those literally would emit "NaN"/"+Inf" tokens that
-// corrupt Nagios perfdata parsers, and an empty field is valid Nagios syntax.
+// perfUnit returns the unit of measure to render, or "" when Icinga 2 could not
+// read it back. PerfdataValue::Parse splits value from unit at the last digit
+// or '.', SplitPerfdata splits tokens on spaces, and a ',' anywhere makes Icinga
+// reject the token; ';' and '=' would shift the threshold fields or the label,
+// and ASCII whitespace would split the token or the output line. Such a unit
+// is dropped whole, which is how Icinga treats units it does not recognize,
+// rather than stripped into a different unit ("k B" is not "kB").
+func perfUnit(unit string) string {
+	if strings.ContainsAny(unit, "0123456789.,;="+asciiSpace) {
+		return ""
+	}
+	return unit
+}
+
+// formatPerfFloat renders a perfdata numeric field losslessly: the shortest
+// decimal string that parses back to the same float64, never in exponent
+// notation, so a whole number renders without a decimal point. Icinga 2's
+// PerfdataValue::Parse reads values and thresholds at full precision and the
+// perfdata writers use the parsed double, so rounding here would change the
+// data Icinga stores. Non-finite values (NaN, +Inf, -Inf) render as an empty
+// string, which is a null threshold field; a non-finite metric value is
+// rendered as "U" by the caller.
 func formatPerfFloat(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return ""
 	}
-	if f == math.Trunc(f) {
-		return fmt.Sprintf("%.0f", f)
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// formatIcingaFloat renders a number the way Icinga 2 formats doubles in
+// Convert::ToString(double) (lib/base/convert.cpp), which PerfdataValue::Format
+// uses for normalized perfdata: a whole number renders without a decimal point,
+// and a fractional number renders with six decimal places. Non-finite values
+// render as an empty string, as in formatPerfFloat.
+func formatIcingaFloat(f float64) string {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return ""
 	}
-	return fmt.Sprintf("%.6f", f)
+	if f == math.Trunc(f) {
+		return strconv.FormatFloat(f, 'f', 0, 64)
+	}
+	return strconv.FormatFloat(f, 'f', 6, 64)
 }
 
 // formatThresholds renders the ;warn;crit;min;max section of a perfdata token
@@ -373,7 +436,7 @@ func formatPerfFloat(f float64) string {
 // only warn and crit set renders ";warn;crit" and a metric with no set field
 // renders no section at all. This keeps zero-value metrics from emitting
 // misleading "0.00" thresholds.
-func formatThresholds(warn, crit, min, max *float64) string {
+func formatThresholds(formatFloat func(float64) string, warn, crit, min, max *float64) string {
 	fields := []*float64{warn, crit, min, max}
 	last := -1
 	for i, field := range fields {
@@ -389,7 +452,7 @@ func formatThresholds(warn, crit, min, max *float64) string {
 	for _, field := range fields[:last+1] {
 		b.WriteByte(';')
 		if field != nil {
-			b.WriteString(formatPerfFloat(*field))
+			b.WriteString(formatFloat(*field))
 		}
 	}
 	return b.String()
@@ -485,15 +548,24 @@ func (cr *CheckResult) SendResult() {
 // what SendResult would pass to os.Exit, but without printing or exiting the
 // program. This lets callers control termination themselves so that deferred
 // functions in their own code still run.
+//
+// An ExitCode outside OK..Unknown returns 3 (Unknown): Icinga records any
+// other exit status as Unknown anyway, and for a status above 3 (including
+// os.Exit(-1), reported as 255) it appends "<Terminated with exit code N>"
+// to the plugin output, corrupting the last perfdata token.
 func (cr *CheckResult) ResultCode() int {
-	return cr.ExitCode.Int()
+	return cr.state().Int()
 }
+
+// defaultFormat is the Format template set by NewCheckResult and used when
+// Format is empty.
+const defaultFormat = "%s: %s"
 
 // NewCheckResult initializes a new check result with default values.
 func NewCheckResult() *CheckResult {
 	return &CheckResult{
 		ExitCode:        OK,
-		Format:          "%s: %s",
+		Format:          defaultFormat,
 		StatusPrefix:    true,
 		PerformanceData: make(map[string]PerformanceMetric),
 		PerfOrder:       []string{},

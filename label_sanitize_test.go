@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestFormatResult_LabelWithoutEquals verifies the Nagios plugin guideline
-// that perfdata labels must not contain '=' ("Label can contain any characters
-// except equals sign or single quote"). An '=' inside the quoted label shifts
-// the value boundary for strict parsers. sanitizePerfToken strips it.
+// TestFormatResult_LabelWithoutEquals verifies that perfdata labels never
+// contain '=': Icinga's SplitPerfdata ends the label at the first '=', so an
+// '=' inside the quoted label shifts the value boundary. sanitizeLabel strips
+// it.
 func TestFormatResult_LabelWithoutEquals(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check")
@@ -18,15 +18,16 @@ func TestFormatResult_LabelWithoutEquals(t *testing.T) {
 
 	// The '=' is stripped: label becomes 'badlabel'
 	if strings.Contains(got, "'bad=label'") {
-		t.Errorf("FormatResult %q keeps '=' inside the label (forbidden by Nagios guidelines)", got)
+		t.Errorf("FormatResult %q keeps '=' inside the label (Icinga ends the label at the first '=')", got)
 	}
 	if !strings.Contains(got, "'badlabel'=1") {
 		t.Errorf("FormatResult %q does not contain the sanitized label 'badlabel'", got)
 	}
 }
 
-// TestFormatResult_LabelAndUnitEquals covers '=' stripping in both sanitized
-// token positions: the metric label and the unit of measure.
+// TestFormatResult_LabelAndUnitEquals covers '=' in both token positions: it
+// is stripped from the metric label, and a unit containing it cannot
+// round-trip through Icinga's parser, so the unit is dropped.
 func TestFormatResult_LabelAndUnitEquals(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check")
@@ -44,7 +45,7 @@ func TestFormatResult_LabelAndUnitEquals(t *testing.T) {
 	if strings.Contains(got, "temp=reading") || strings.Contains(got, "C=injected") {
 		t.Errorf("FormatResult %q keeps '=' inside a perfdata token", got)
 	}
-	if !strings.Contains(got, "'tempreading'=20.500000Cinjected;25;30;0;100") {
+	if !strings.Contains(got, "'tempreading'=20.5;25;30;0;100") {
 		t.Errorf("FormatResult %q does not contain the sanitized label and UOM", got)
 	}
 	// Exactly one '=' per token, separating label from value

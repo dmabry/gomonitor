@@ -1,9 +1,6 @@
 package gomonitor
 
-import (
-	"math"
-	"strings"
-)
+import "math"
 
 // This file mirrors the unit-of-measure handling of Icinga 2's
 // PerfdataValue (lib/base/perfdatavalue.cpp): the UoM tables, the factor
@@ -140,9 +137,14 @@ func buildCsUoMs() map[string]uomFactor {
 
 // caseInsensitiveUoMs mirrors Icinga 2's l_CiUoMs: time, mass, volume and
 // misc units resolved from the lowercased unit.
+//
+// The nano factors are written as literals: Icinga evaluates
+// 1.0 / 1000 / 1000 / 1000 step by step in double precision, which gives
+// 9.999999999999999e-10, while the same Go constant expression is evaluated
+// exactly and gives 1e-09.
 var caseInsensitiveUoMs = map[string]uomFactor{
 	// Time:
-	"ns": {1.0 / 1000 / 1000 / 1000, "seconds"},
+	"ns": {9.999999999999999e-10, "seconds"},
 	"us": {1.0 / 1000 / 1000, "seconds"},
 	"ms": {1.0 / 1000, "seconds"},
 	"s":  {1, "seconds"},
@@ -151,7 +153,7 @@ var caseInsensitiveUoMs = map[string]uomFactor{
 	"d":  {60 * 60 * 24, "seconds"},
 
 	// Mass:
-	"ng": {1.0 / 1000 / 1000 / 1000, "grams"},
+	"ng": {9.999999999999999e-10, "grams"},
 	"ug": {1.0 / 1000 / 1000, "grams"},
 	"mg": {1.0 / 1000, "grams"},
 	"g":  {1, "grams"},
@@ -196,7 +198,7 @@ var formatUoMs = map[string]string{
 
 // lookupUoM resolves a unit of measure the way Icinga 2's
 // PerfdataValue::Parse does: the case-sensitive table first, then the
-// lowercased unit in the case-insensitive table. The counter unit "c" sets
+// ASCII-lowercased unit in the case-insensitive table. The counter unit "c" sets
 // the counter flag with a factor of 1. An unknown unit is reported as
 // unknown with a factor of 1 — Icinga keeps the value and drops the unit.
 func lookupUoM(unit string) (factor float64, canonical string, counter bool, known bool) {
@@ -208,11 +210,24 @@ func lookupUoM(unit string) (factor float64, canonical string, counter bool, kno
 		return u.factor, u.out, false, true
 	}
 
-	if u, ok := caseInsensitiveUoMs[strings.ToLower(unit)]; ok {
+	if u, ok := caseInsensitiveUoMs[asciiLower(unit)]; ok {
 		return u.factor, u.out, false, true
 	}
 
 	return 1, "", false, false
+}
+
+// asciiLower lowercases only ASCII letters, matching Icinga 2's
+// boost::algorithm::to_lower in the classic locale. strings.ToLower would also
+// fold non-ASCII letters, e.g. the Kelvin sign U+212A to 'k'.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // normalized returns a copy of the metric with its value and set thresholds

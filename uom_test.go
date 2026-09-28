@@ -93,7 +93,7 @@ func TestFormatResult_NormalizedUnitsOff(t *testing.T) {
 
 	got := r.FormatResult()
 
-	for _, want := range []string{"'rta'=12.445000ms", "'disk'=2kib;1"} {
+	for _, want := range []string{"'rta'=12.445ms", "'disk'=2kib;1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatResult %q does not contain unnormalized perfdata %q", got, want)
 		}

@@ -195,7 +195,7 @@ func TestFormatResult(t *testing.T) {
 				return r
 			},
 			wantOK:   true,
-			contains: []string{"Warning", "High latency detected", "'response_time'=1.230000ms;1;2;0;10"},
+			contains: []string{"Warning", "High latency detected", "'response_time'=1.23ms;1;2;0;10"},
 		},
 		{
 			name: "MultiplePerfData_MultiMetrics",
@@ -286,8 +286,8 @@ func TestFormatResult_StatusPrefixDisabled(t *testing.T) {
 	r2.AddPerformanceData("response_time", PerformanceMetric{
 		Value: 1.23, Warn: new(1.00), Crit: new(2.00), Min: new(0.00), Max: new(10.00), UnitOM: "ms",
 	})
-	if got := r2.FormatResult(); !containsString(got, "High latency | 'response_time'=1.230000ms;1;2;0;10") {
-		t.Errorf("FormatResult with perfdata got %q, want to contain %q", got, "High latency | 'response_time'=1.230000ms;1;2;0;10")
+	if got := r2.FormatResult(); !containsString(got, "High latency | 'response_time'=1.23ms;1;2;0;10") {
+		t.Errorf("FormatResult with perfdata got %q, want to contain %q", got, "High latency | 'response_time'=1.23ms;1;2;0;10")
 	}
 }
 
@@ -299,7 +299,7 @@ func TestFormatResult_PerformanceData(t *testing.T) {
 	})
 	output := r.FormatResult()
 
-	wantFormat := "'test_metric'=42.500000%;30;50;0;100"
+	wantFormat := "'test_metric'=42.5%;30;50;0;100"
 	if !containsString(output, wantFormat) {
 		t.Errorf("Performance data format incorrect.\nGot: %s\nExpected substring: %s", output, wantFormat)
 	}
@@ -314,7 +314,10 @@ func TestFormatResult_SanitizesPerfData(t *testing.T) {
 
 	got := r.FormatResult()
 
-	wantLabel := "'labelwithbadchar'=1msinjected;2;3;0;10"
+	// The line break and the single quote are stripped from the label; the
+	// unit contains ';' and cannot round-trip through Icinga's parser, so it
+	// is dropped.
+	wantLabel := "'label|with;badchar'=1;2;3;0;10"
 	if !strings.Contains(got, wantLabel) {
 		t.Errorf("FormatResult %q does not contain sanitized perfdata %q", got, wantLabel)
 	}
@@ -324,8 +327,8 @@ func TestFormatResult_SanitizesPerfData(t *testing.T) {
 	if strings.Contains(got, "\n") {
 		t.Errorf("FormatResult %q still contains an unsanitized newline", got)
 	}
-	if strings.Contains(got, "bad'") || strings.Contains(got, ";bad") || strings.Contains(got, "with|") {
-		t.Errorf("FormatResult %q still contains an unsanitized injected delimiter in the label", got)
+	if strings.Contains(got, "injected") {
+		t.Errorf("FormatResult %q still contains the unsafe unit", got)
 	}
 }
 
@@ -338,16 +341,16 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 		{
 			name:   "NaN value",
 			metric: PerformanceMetric{Value: math.NaN(), Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
-			want:   "'m'=;2;3;0;10",
+			want:   "'m'=U;2;3;0;10",
 		},
 		{
 			// Pins the unit suppression: a non-finite value with a
 			// non-empty UOM must not emit the unit string in the value
-			// position ('m'=ms), which corrupts the token for strict
+			// position ('m'=Ums), which corrupts the token for strict
 			// Nagios parsers.
 			name:   "NaN value with unit",
 			metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
-			want:   "'m'=;2;3;0;10",
+			want:   "'m'=U;2;3;0;10",
 		},
 		{
 			name:   "Infinity thresholds",
@@ -419,9 +422,10 @@ func TestFormatResult_LongOutput(t *testing.T) {
 }
 
 // TestFormatResult_LongOutputSanitized pins the long-output sanitization:
-// '\r' and '|' are stripped (a '|' followed by '=' on a long-output line would
-// be parsed as a performance data token by Icinga 2's ParseCheckOutput) and
-// trailing line breaks are trimmed. Interior '\n' line breaks are preserved.
+// '\r' is stripped, a '|' followed by '=' on a long-output line is stripped
+// (Icinga 2's ParseCheckOutput would parse it as a performance data token)
+// and trailing line breaks are trimmed. Interior '\n' line breaks are
+// preserved.
 func TestFormatResult_LongOutputSanitized(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check")
@@ -498,21 +502,21 @@ func TestFormatResult_UnsetThresholds(t *testing.T) {
 	}
 }
 
-// TestFormatResult_IcingaNumberFormat pins the Icinga 2 numeric rendering
-// (Convert::ToString(double) in lib/base/convert.cpp): whole numbers render
-// without a decimal point and fractional numbers render with six decimal
-// places, so small values are not truncated to "0.00".
-func TestFormatResult_IcingaNumberFormat(t *testing.T) {
+// TestFormatResult_NumberFormat pins the numeric rendering of normal output:
+// whole numbers render without a decimal point and fractional numbers render
+// in the shortest decimal form that round-trips, so Icinga's
+// PerfdataValue::Parse reads back exactly the value the plugin set.
+func TestFormatResult_NumberFormat(t *testing.T) {
 	testCases := []struct {
 		name  string
 		value float64
 		want  string
 	}{
 		{name: "whole number", value: 95, want: "'m'=95"},
-		{name: "fractional", value: 1.23, want: "'m'=1.230000"},
-		{name: "small fractional beyond 2 decimals", value: 0.125, want: "'m'=0.125000"},
+		{name: "fractional", value: 1.23, want: "'m'=1.23"},
+		{name: "small fractional beyond 2 decimals", value: 0.125, want: "'m'=0.125"},
 		{name: "negative whole", value: -3, want: "'m'=-3"},
-		{name: "negative fractional", value: -1.5, want: "'m'=-1.500000"},
+		{name: "negative fractional", value: -1.5, want: "'m'=-1.5"},
 	}
 
 	for _, tc := range testCases {

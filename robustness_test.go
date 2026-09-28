@@ -31,8 +31,7 @@ func TestDeletePerformanceData_LastMetricKeepsOrder(t *testing.T) {
 }
 
 // TestDeletePerformanceData_MiddleMetricKeepsOrder ensures a middle delete
-// still swaps the last element into the deleted slot and keeps the remaining
-// metrics in their original relative order.
+// keeps the remaining metrics in their original relative order.
 func TestDeletePerformanceData_MiddleMetricKeepsOrder(t *testing.T) {
 	r := NewCheckResult()
 	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})

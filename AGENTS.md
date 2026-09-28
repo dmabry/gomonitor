@@ -27,7 +27,7 @@ The GitHub workflow at `.github/workflows/go-test.yml` runs:
 3. Tests: `go test -race -cover ./...`
 4. Build: `go build -v ./...`
 
-The job has a 10-minute timeout.
+The job has a 10-minute timeout. The workflow also runs as a reusable workflow (`workflow_call`), and `release.yml` calls it as its gate, so PRs and releases always run the same checks. Change the gate in `go-test.yml` only.
 
 ## Code Style Guidelines
 
@@ -62,6 +62,8 @@ The job has a 10-minute timeout.
 ### Performance Data & Monitoring
 - Performance metrics follow Nagios plugin specification: `'label'=value[UOM];warn;crit;min;max`
 - Maintain insertion order for metrics via the `PerfOrder` slice for predictable output
+- The goal is 100% compatibility with upstream Icinga 2's plugin output parsing. Check behavior against the Icinga 2 sources (`lib/icinga/pluginutility.cpp` `ParseCheckOutput`/`SplitPerfdata`, `lib/base/perfdatavalue.cpp` `Parse`/`Format`, `lib/base/convert.cpp`, `lib/methods/pluginchecktask.cpp`), and prefer Icinga's behavior where it differs from the Nagios guidelines, as long as the output stays valid under the guidelines (e.g. `'` is stripped from labels because no encoding of it is correct for both)
+- Normal output renders numbers losslessly; only `NormalizeUnits` output uses Icinga's six-decimal display format
 
 ## Project Structure Overview
 
@@ -86,39 +88,39 @@ This is a Go library providing Nagios-compatible monitoring:
 
 ### Automated release (recommended)
 
-Pushing a tag triggers the workflow at `.github/workflows/release.yml`, which runs the full quality gate (tidy -diff, gofmt, vet, mod verify, `go test -race -cover`, build) and creates the GitHub release with generated notes:
+Pushing a tag starts the workflow at `.github/workflows/release.yml`. It first validates the tag, then runs the quality gate from `go-test.yml` (tidy -diff, gofmt, vet, mod verify, `go test -race -cover`, build), and only then creates the GitHub release with generated notes:
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
+Tag validation rejects the release when:
+- the tag is not `vMAJOR.MINOR.PATCH` with an optional `-PRERELEASE` suffix (build metadata `+...` is not allowed in Go module versions)
+- the tagged commit is not on `main`
+- the major version does not match the module path (v2 and above need the `/vN` suffix in `go.mod`; v0 and v1 must not have one)
+
+A tag with a pre-release suffix (e.g. `v1.2.0-rc.1`) is published as a GitHub pre-release, so it is not marked Latest. Only the final job has write access, and it runs no repository code.
+
 ### Manual release (fallback)
 
-```bash
-# 1. Ensure all tests pass
-go test -v ./...
+Use this only when the Release workflow failed for reasons unrelated to the code (e.g. a GitHub outage) and the tag is already pushed. Do not push the tag again: pushing it is what starts the workflow, and a second `gh release create` for the same tag fails.
 
-# 2. Run code quality checks
+```bash
+# 1. Confirm the workflow did not create the release
+gh release view v1.0.0 --repo dmabry/gomonitor   # must report "release not found"
+
+# 2. Run the quality gate locally on the tagged commit
+git checkout v1.0.0
+go mod tidy -diff
 gofmt -l .
 go vet ./...
 go mod verify
+go test -race -cover ./...
+go build -v ./...
 
-# 3. Create and push a git tag (semantic versioning required)
-git tag v1.0.0
-git push origin v1.0.0
-
-# 4. Create GitHub release with gh CLI
-gh release create v1.0.0 --repo dmabry/gomonitor -t "v1.0.0" -n "$(cat <<'EOF'
-## Summary
-
-Describe what's new in this release.
-
-## Changes
-
-- List of changes, features, or fixes
-EOF
-)"
+# 3. Create the release from the existing tag (add --prerelease for -rc tags)
+gh release create v1.0.0 --repo dmabry/gomonitor --verify-tag --generate-notes
 ```
 
 ### Versioning Guidelines
