@@ -24,7 +24,8 @@ go mod tidy                             # Tidy go.mod/go.sum files
 The GitHub workflow at `.github/workflows/go-test.yml` runs:
 1. `go mod tidy`
 2. Code quality: `gofmt -l .`, `go vet ./...`, `go mod verify`
-3. Build: `go build -v ./...`
+3. Tests: `go test ./...`
+4. Build: `go build -v ./...`
 
 ## Code Style Guidelines
 
@@ -65,7 +66,7 @@ The GitHub workflow at `.github/workflows/go-test.yml` runs:
 This is a Go library providing Nagios-compatible monitoring:
 - **Main types**: `ExitCode` (OK/Warning/Critical/Unknown), `CheckResult`, `PerformanceMetric`
 - **Key methods**: `NewCheckResult()`, `SetResult()`, performance data methods (`Add*`, `Update*`, `Delete*`), output methods (`FormatResult()`, `SendResult()`)
-- All tests in `gomonitor_test.go` follow table-driven test pattern
+- Tests across the `*_test.go` files follow table-driven patterns where applicable
 
 ## Working with this Codebase
 
@@ -77,7 +78,7 @@ This is a Go library providing Nagios-compatible monitoring:
 ## Version & Compatibility
 
 - Go version: 1.24.4 (from go.mod)
-- CI uses Ubuntu latest with actions/checkout@v3, actions/setup-go@v4
+- CI uses Ubuntu latest with actions/checkout@v7, actions/setup-go@v7
 
 ## Releasing a New Version
 

@@ -168,6 +168,7 @@ func TestFormatResult(t *testing.T) {
 		setup    func() *CheckResult
 		wantOK   bool
 		contains []string
+		want     string // exact output when non-empty
 	}{
 		{
 			name: "NoPerfData_NoMetrics",
@@ -214,6 +215,9 @@ func TestFormatResult(t *testing.T) {
 			},
 			wantOK:   true,
 			contains: []string{"[Unknown]", "Plugin unable to determine status"},
+			// Pins the %% escape: "%%s" must render as a literal "%s",
+			// not a third verb slot that duplicates the message.
+			want: "[Unknown] Plugin unable to determine status (details: %s)",
 		},
 	}
 
@@ -224,6 +228,10 @@ func TestFormatResult(t *testing.T) {
 
 			if tc.wantOK && output == "" {
 				t.Error("FormatResult returned empty string")
+			}
+
+			if tc.want != "" && output != tc.want {
+				t.Errorf("FormatResult got %q, want %q", output, tc.want)
 			}
 
 			for _, c := range tc.contains {
@@ -329,6 +337,15 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 			want:   "'m'=;2.00;3.00;0.00;10.00",
 		},
 		{
+			// Pins the unit suppression: a non-finite value with a
+			// non-empty UOM must not emit the unit string in the value
+			// position ('m'=ms), which corrupts the token for strict
+			// Nagios parsers.
+			name:   "NaN value with unit",
+			metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0},
+			want:   "'m'=;2.00;3.00;0.00;10.00",
+		},
+		{
 			name:   "Infinity thresholds",
 			metric: PerformanceMetric{Value: 1.0, Warn: math.Inf(1), Crit: math.Inf(-1), Min: 0.0, Max: 10.0},
 			want:   "'m'=1.00;;;0.00;10.00",
@@ -361,6 +378,21 @@ func TestFormatResult_NoTrailingSpace(t *testing.T) {
 	want := "OK: check | 'm'=1.00;2.00;3.00;0.00;10.00"
 	if got != want {
 		t.Errorf("FormatResult got %q, want %q (output must not end with a trailing space)", got, want)
+	}
+}
+
+// TestFormatResult_SanitizesMessage pins the message sanitization: '|', '\r',
+// and '\n' are stripped from the message so single-line Nagios output stays
+// well-formed and the '|' cannot forge a fake perfdata section (documented on
+// sanitizeMessage and in README.md).
+func TestFormatResult_SanitizesMessage(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "forged|pipe\rline\nbreak")
+
+	got := r.FormatResult()
+	want := "OK: forgedpipelinebreak"
+	if got != want {
+		t.Errorf("FormatResult got %q, want %q (message must be stripped of '|', '\\r', '\\n')", got, want)
 	}
 }
 
