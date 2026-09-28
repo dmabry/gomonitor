@@ -233,10 +233,19 @@ func (cr *CheckResult) FormatResult() string {
 				// zero-value metric.
 				continue
 			}
+			valueStr := formatPerfFloat(metric.Value)
+			unit := sanitizePerfToken(metric.UnitOM)
+			if valueStr == "" {
+				// A non-finite value renders blank; emitting the unit
+				// right after '=' would put a non-numeric unit string in
+				// the value position (e.g. 'm'=ms), so the unit is
+				// suppressed along with the value.
+				unit = ""
+			}
 			metricStr := fmt.Sprintf("'%s'=%s%s;%s;%s;%s;%s ",
 				sanitizePerfToken(key),
-				formatPerfFloat(metric.Value),
-				sanitizePerfToken(metric.UnitOM),
+				valueStr,
+				unit,
 				formatPerfFloat(metric.Warn),
 				formatPerfFloat(metric.Crit),
 				formatPerfFloat(metric.Min),
@@ -306,39 +315,70 @@ func formatPerfFloat(f float64) string {
 // every other '%' passes through literally (no Sprintf interpretation,
 // so stray percents in a template cannot produce "%!s(MISSING)" garbage).
 // For backward compatibility, a "%%" in the template still collapses to a
-// single "%" (the previous Sprintf escape hatch).
+// single "%" (the previous Sprintf escape hatch) and is scanned before the
+// "%s" verbs, so a trailing "s" after "%%" stays literal.
 func formatTemplate(template, status, message string) string {
-	parts := strings.Split(template, "%s")
-
-	// Collapse "%%" escapes in the template itself, matching the old
-	// Sprintf-based behavior. Status/message arguments are substituted
-	// afterwards, so percents in user content pass through untouched.
-	for i := range parts {
-		parts[i] = strings.ReplaceAll(parts[i], "%%", "%")
+	// Tokenize left to right: "%%" collapses to "%" before any "%s" verb
+	// matching, matching the old Sprintf-based behavior where "%%s"
+	// rendered as a literal "%s"; percents in user content pass through
+	// untouched because only the template is scanned.
+	type token struct {
+		text string // literal text to emit verbatim
+		verb bool   // "%s" verb to substitute
+	}
+	var tokens []token
+	var text strings.Builder
+	for i := 0; i < len(template); {
+		switch {
+		case strings.HasPrefix(template[i:], "%%"):
+			text.WriteByte('%')
+			i += 2
+		case strings.HasPrefix(template[i:], "%s"):
+			if text.Len() > 0 {
+				tokens = append(tokens, token{text: text.String()})
+				text.Reset()
+			}
+			tokens = append(tokens, token{verb: true})
+			i += 2
+		default:
+			text.WriteByte(template[i])
+			i++
+		}
+	}
+	if text.Len() > 0 {
+		tokens = append(tokens, token{text: text.String()})
 	}
 
-	// Templates without any verb are returned as-is.
-	if len(parts) == 1 {
-		return parts[0]
+	verbCount := 0
+	for _, tok := range tokens {
+		if tok.verb {
+			verbCount++
+		}
 	}
 
 	var b strings.Builder
-	b.WriteString(parts[0])
-	if len(parts) == 2 {
-		// A single-verb template receives the message: the message is the
-		// payload of the output and silently dropping it would hide the
-		// diagnostic text. The status is still conveyed by the exit code.
-		b.WriteString(message)
-	} else {
-		// The first verb is the status; every subsequent verb receives the
-		// message.
-		b.WriteString(status)
-		for i := 1; i < len(parts)-1; i++ {
-			b.WriteString(parts[i])
-			b.WriteString(message)
+	verbSeen := 0
+	for _, tok := range tokens {
+		if tok.verb {
+			verbSeen++
+			switch {
+			case verbCount == 1:
+				// A single-verb template receives the message: the message
+				// is the payload of the output and silently dropping it
+				// would hide the diagnostic text. The status is still
+				// conveyed by the exit code.
+				b.WriteString(message)
+			case verbSeen == 1:
+				// The first verb of a multi-verb template is the status.
+				b.WriteString(status)
+			default:
+				// Every subsequent verb receives the message.
+				b.WriteString(message)
+			}
+			continue
 		}
+		b.WriteString(tok.text)
 	}
-	b.WriteString(parts[len(parts)-1])
 	return b.String()
 }
 
