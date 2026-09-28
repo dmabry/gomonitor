@@ -117,7 +117,7 @@ type PerformanceMetric struct {
 //     The counter unit "c" renders as "c" without scaling; an unknown unit
 //     is dropped and the value kept, matching Icinga. Normalized numbers use
 //     Icinga's display format (six decimal places for fractions), so they are
-//     rounded, and a value that overflows when scaled renders blank where
+//     rounded, and a value that overflows when scaled renders as "U" where
 //     Icinga would print "inf". Off by default, and not needed for Icinga:
 //     Icinga normalizes perfdata itself when it parses the plugin output
 //     (the perfdata writers and Icinga DB's normalized_performance_data),
@@ -309,26 +309,16 @@ func (m PerformanceMetric) format(label string, normalize bool) string {
 
 	value := formatFloat(m.Value)
 	if value == "" {
-		// A non-finite value renders blank; emitting the unit right after
-		// '=' would put a non-numeric unit string in the value position
-		// (e.g. 'm'=ms), so the unit is suppressed along with the value.
+		// A non-finite value (including one that overflows when normalized)
+		// is rendered as "U", the Monitoring Plugins guideline for a value
+		// that could not be determined. The unit is suppressed so the value
+		// field stays a bare "U" rather than e.g. "Ums". Icinga rejects the
+		// token either way.
+		value = "U"
 		unit = ""
 	}
 
-	return quoteLabel(label) + "=" + value + unit + formatThresholds(formatFloat, m.Warn, m.Crit, m.Min, m.Max)
-}
-
-// quoteLabel wraps a sanitized label in single quotes so that Icinga 2 stores
-// it unchanged. Icinga unquotes twice: SplitPerfdata strips one pair of outer
-// quotes and re-quotes the label only if it contains a space, then
-// PerfdataValue::Parse strips outer quotes again from any label longer than
-// two characters. A label without a space that itself starts and ends with
-// "'" therefore needs a second pair.
-func quoteLabel(label string) string {
-	if len(label) > 2 && label[0] == '\'' && label[len(label)-1] == '\'' && !strings.Contains(label, " ") {
-		return "''" + label + "''"
-	}
-	return "'" + label + "'"
+	return "'" + label + "'=" + value + unit + formatThresholds(formatFloat, m.Warn, m.Crit, m.Min, m.Max)
 }
 
 // state returns the exit code Icinga records for the result. Icinga maps every
@@ -380,13 +370,15 @@ func sanitizeMessage(s string) string {
 	return s
 }
 
-// sanitizeLabel strips the characters Icinga 2 cannot carry in a perfdata
-// label. SplitPerfdata ends the label at the first '=', and a line break
-// would end the perfdata line. Everything else round-trips: quoteLabel wraps
-// the label so that Icinga's unquoting leaves it intact, an inner "'"
-// survives, ';' is harmless before the last '=', and '|' is harmless after
-// the perfdata delimiter.
+// sanitizeLabel strips the characters that neither Icinga 2 nor the Nagios
+// plugin guidelines allow in a perfdata label. Icinga's SplitPerfdata ends the
+// label at the first '=', and a line break would end the perfdata line. The
+// guidelines forbid "'" and escape it by doubling, which Icinga does not
+// unescape, so no encoding of a quote is correct for both; stripping it keeps
+// the output valid everywhere. Everything else, including ';' and '|', is
+// allowed by the guidelines and round-trips through Icinga.
 func sanitizeLabel(s string) string {
+	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "=", "")
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.ReplaceAll(s, "\n", "")
@@ -413,7 +405,8 @@ func perfUnit(unit string) string {
 // PerfdataValue::Parse reads values and thresholds at full precision and the
 // perfdata writers use the parsed double, so rounding here would change the
 // data Icinga stores. Non-finite values (NaN, +Inf, -Inf) render as an empty
-// string: Icinga rejects them, and an empty field is valid Nagios syntax.
+// string, which is a null threshold field; a non-finite metric value is
+// rendered as "U" by the caller.
 func formatPerfFloat(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return ""
@@ -425,7 +418,7 @@ func formatPerfFloat(f float64) string {
 // Convert::ToString(double) (lib/base/convert.cpp), which PerfdataValue::Format
 // uses for normalized perfdata: a whole number renders without a decimal point,
 // and a fractional number renders with six decimal places. Non-finite values
-// render as an empty string, as in formatPerfFloat (Icinga would print "inf").
+// render as an empty string, as in formatPerfFloat.
 func formatIcingaFloat(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return ""

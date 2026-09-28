@@ -1,6 +1,7 @@
 package gomonitor
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -131,20 +132,21 @@ func TestLookupUoM_NanoFactorsMatchIcinga(t *testing.T) {
 	}
 }
 
-// TestFormatResult_LabelKeepsIcingaSafeCharacters pins the label rules.
-// SplitPerfdata ends a label at the first '=', so '=' is stripped, and line
-// breaks would split the output; everything else survives. Icinga strips
-// only the outer quotes, so an inner "'" round-trips, ';' is safe before the
-// last '=', and '|' is safe after the perfdata delimiter.
-func TestFormatResult_LabelKeepsIcingaSafeCharacters(t *testing.T) {
+// TestFormatResult_LabelRules pins the label rules. '=' is stripped because
+// Icinga's SplitPerfdata ends the label at the first '=', line breaks would
+// split the output, and "'" is stripped because the Nagios plugin guidelines
+// forbid it (Icinga does not unescape the spec's two-single-quote escape, so
+// it would store the doubled quote). ';' and '|' are allowed by the guidelines and
+// handled by Icinga, so they are kept.
+func TestFormatResult_LabelRules(t *testing.T) {
 	testCases := []struct {
 		label string
 		want  string
 	}{
-		{label: "it's", want: "'it's'=1"},
+		{label: "it's", want: "'its'=1"},
+		{label: "'ab'", want: "'ab'=1"},
 		{label: "semi;colon", want: "'semi;colon'=1"},
 		{label: "pipe|x", want: "'pipe|x'=1"},
-		{label: "'", want: "'''=1"},
 		{label: "disk usage", want: "'disk usage'=1"},
 		{label: "a=b", want: "'ab'=1"},
 		{label: "line\r\nbreak", want: "'linebreak'=1"},
@@ -171,6 +173,7 @@ func TestFormatResult_EmptyLabelSkipped(t *testing.T) {
 	r.SetResult(OK, "check")
 	r.AddPerformanceData("", PerformanceMetric{Value: 1})
 	r.AddPerformanceData("=", PerformanceMetric{Value: 2})
+	r.AddPerformanceData("''", PerformanceMetric{Value: 4})
 	r.AddPerformanceData("ok", PerformanceMetric{Value: 3})
 
 	if got, want := r.FormatResult(), "OK: check | 'ok'=3"; got != want {
@@ -269,35 +272,6 @@ func TestFormatResult_EmptyFormatUsesDefault(t *testing.T) {
 	}
 }
 
-// TestFormatResult_QuotedLabelSurvivesDoubleUnquote pins labels that start and
-// end with "'". Icinga strips one pair of outer quotes in SplitPerfdata, which
-// re-quotes the label only when it contains a space, and PerfdataValue::Parse
-// strips another pair, so such a label without a space needs two pairs of
-// quotes to be stored as written.
-func TestFormatResult_QuotedLabelSurvivesDoubleUnquote(t *testing.T) {
-	testCases := []struct {
-		label string
-		want  string
-	}{
-		{label: "'ab'", want: "'''ab'''=1"},
-		{label: "'a'", want: "'''a'''=1"},
-		{label: "'a b'", want: "''a b''=1"},
-		{label: "''", want: "''''=1"},
-		{label: "'ab", want: "''ab'=1"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.label, func(t *testing.T) {
-			r := NewCheckResult()
-			r.SetResult(OK, "check")
-			r.AddPerformanceData(tc.label, PerformanceMetric{Value: 1})
-			if got := r.FormatResult(); got != "OK: check | "+tc.want {
-				t.Errorf("FormatResult() = %q, want perfdata %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // TestFormatResult_BlankShortOutputIsASCIIWhitespace pins that only ASCII
 // whitespace counts as blank, matching Icinga's boost::algorithm::trim in the
 // classic locale: a message of U+00A0 is kept as the short output.
@@ -332,6 +306,37 @@ func TestFormatResult_FormatTemplateSanitized(t *testing.T) {
 			r.AddPerformanceData("a", PerformanceMetric{Value: 1})
 			if got := r.FormatResult(); got != tc.want {
 				t.Errorf("FormatResult() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatResult_UndeterminedValueIsU pins the Monitoring Plugins guideline
+// that a value which could not be determined is the literal "U". NaN and
+// +/-Inf have no valid numeric rendering, so they render as "U" with the unit
+// suppressed. Non-finite thresholds render as empty (null) fields, since "U"
+// is only defined for the value. Icinga rejects the token either way.
+func TestFormatResult_UndeterminedValueIsU(t *testing.T) {
+	testCases := []struct {
+		name      string
+		metric    PerformanceMetric
+		normalize bool
+		want      string
+	}{
+		{name: "NaN", metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: new(2.0)}, want: "'m'=U;2"},
+		{name: "+Inf", metric: PerformanceMetric{Value: math.Inf(1)}, want: "'m'=U"},
+		{name: "-Inf", metric: PerformanceMetric{Value: math.Inf(-1), Crit: new(math.NaN()), Max: new(1.0)}, want: "'m'=U;;;;1"},
+		{name: "overflow when normalized", metric: PerformanceMetric{Value: 1e300, UnitOM: "YB"}, normalize: true, want: "'m'=U"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.NormalizeUnits = tc.normalize
+			r.SetResult(OK, "check")
+			r.AddPerformanceData("m", tc.metric)
+			if got := r.FormatResult(); got != "OK: check | "+tc.want {
+				t.Errorf("FormatResult() = %q, want perfdata %q", got, tc.want)
 			}
 		})
 	}

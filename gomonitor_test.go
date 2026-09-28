@@ -314,9 +314,10 @@ func TestFormatResult_SanitizesPerfData(t *testing.T) {
 
 	got := r.FormatResult()
 
-	// Only the line break is stripped from the label; the unit contains ';'
-	// and cannot round-trip through Icinga's parser, so it is dropped.
-	wantLabel := "'label|with;bad'char'=1;2;3;0;10"
+	// The line break and the single quote are stripped from the label; the
+	// unit contains ';' and cannot round-trip through Icinga's parser, so it
+	// is dropped.
+	wantLabel := "'label|with;badchar'=1;2;3;0;10"
 	if !strings.Contains(got, wantLabel) {
 		t.Errorf("FormatResult %q does not contain sanitized perfdata %q", got, wantLabel)
 	}
@@ -340,16 +341,16 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 		{
 			name:   "NaN value",
 			metric: PerformanceMetric{Value: math.NaN(), Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
-			want:   "'m'=;2;3;0;10",
+			want:   "'m'=U;2;3;0;10",
 		},
 		{
 			// Pins the unit suppression: a non-finite value with a
 			// non-empty UOM must not emit the unit string in the value
-			// position ('m'=ms), which corrupts the token for strict
+			// position ('m'=Ums), which corrupts the token for strict
 			// Nagios parsers.
 			name:   "NaN value with unit",
 			metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
-			want:   "'m'=;2;3;0;10",
+			want:   "'m'=U;2;3;0;10",
 		},
 		{
 			name:   "Infinity thresholds",

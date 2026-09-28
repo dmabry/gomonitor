@@ -62,7 +62,7 @@ The job has a 10-minute timeout. The workflow also runs as a reusable workflow (
 ### Performance Data & Monitoring
 - Performance metrics follow Nagios plugin specification: `'label'=value[UOM];warn;crit;min;max`
 - Maintain insertion order for metrics via the `PerfOrder` slice for predictable output
-- The goal is 100% compatibility with upstream Icinga 2's plugin output parsing. Check behavior against the Icinga 2 sources (`lib/icinga/pluginutility.cpp` `ParseCheckOutput`/`SplitPerfdata`, `lib/base/perfdatavalue.cpp` `Parse`/`Format`, `lib/base/convert.cpp`, `lib/methods/pluginchecktask.cpp`), and prefer Icinga's behavior where it differs from the Nagios guidelines
+- The goal is 100% compatibility with upstream Icinga 2's plugin output parsing. Check behavior against the Icinga 2 sources (`lib/icinga/pluginutility.cpp` `ParseCheckOutput`/`SplitPerfdata`, `lib/base/perfdatavalue.cpp` `Parse`/`Format`, `lib/base/convert.cpp`, `lib/methods/pluginchecktask.cpp`), and prefer Icinga's behavior where it differs from the Nagios guidelines, as long as the output stays valid under the guidelines (e.g. `'` is stripped from labels because no encoding of it is correct for both)
 - Normal output renders numbers losslessly; only `NormalizeUnits` output uses Icinga's six-decimal display format
 
 ## Project Structure Overview
