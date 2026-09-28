@@ -15,6 +15,7 @@ gomonitor provides a framework for creating monitoring checks that follow the Na
   - [Adding Performance Data](#adding-performance-data)
   - [Command-line Options and Verbose Output](#command-line-options-and-verbose-output)
   - [Long Output](#long-output)
+  - [Unit of Measure Normalization](#unit-of-measure-normalization)
   - [Complete Example: Load Average Check](#complete-example-load-average-check)
 - [API Reference](#api-reference)
   - [ExitCode](#exitcode)
@@ -217,6 +218,26 @@ fmt.Println(result.FormatResult())
 
 `LongOutput` is sanitized when rendered: `\r` and `|` are stripped (a `|` followed by `=` on a long-output line would be parsed as performance data by Icinga 2's `ParseCheckOutput`) and trailing line breaks are trimmed; `\n` is preserved as the line separator.
 
+### Unit of Measure Normalization
+
+By default, `UnitOM` passes through verbatim — the plugin output keeps the units you chose, which is what Nagios and Icinga receive. Set `NormalizeUnits` on the check result to enable Icinga 2-style normalization (mirroring `PerfdataValue::Parse` and `PerfdataValue::Format`): each metric's value and set thresholds are multiplied by the unit's factor and the canonical short unit is rendered:
+
+```go
+result := gomonitor.NewCheckResult()
+result.NormalizeUnits = true
+result.SetResult(gomonitor.OK, "latency ok")
+result.AddPerformanceData("rta", gomonitor.PerformanceMetric{Value: 12.445, UnitOM: "ms"})
+result.AddPerformanceData("disk", gomonitor.PerformanceMetric{Value: 2, UnitOM: "kiB", Warn: &warn, Crit: &crit})
+fmt.Println(result.FormatResult())
+// OK: latency ok | 'rta'=0.012445s;0.050000 'disk'=2048B;1024;2048
+```
+
+Supported units mirror Icinga 2's tables:
+
+- Case-sensitive: `%`, the counter unit `c`, `C` (celsius), data units `b`/`B` (bits/bytes) with SI prefixes `k`…`Y` and IEC `i`/`I` suffixes, energy units `a`/`o`/`v`/`w` (amperes/ohms/volts/watts) with prefixes, and charge/energy forms with time suffixes (`As`, `Wh`, …).
+- Case-insensitive: time `ns`…`d` → seconds, mass `ng`…`t` → grams, volume `ml`/`l`/`hl` → liters, plus `packets`, `lm`, `dbm`, `f`, `k`.
+- The counter unit `c` renders as `c` without scaling. An unknown unit is dropped and the value kept, matching Icinga's behavior.
+
 ### Complete Example: Load Average Check
 
 Here's a complete example of a Nagios plugin that checks system load average:
@@ -330,6 +351,7 @@ type CheckResult struct {
     PerfOrder       []string
     PerformanceData map[string]gomonitor.PerformanceMetric
     Format          string
+    NormalizeUnits  bool // Icinga 2-style UoM normalization (opt-in, off by default)
     StatusPrefix    bool // set true by NewCheckResult; zero-value structs have it false (no status prefix)
 }
 ```
