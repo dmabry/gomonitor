@@ -7,6 +7,12 @@ on:
   pull_request:
     branches:
       - main
+  # Reused by release.yml as its quality gate, so PRs and releases always run
+  # the same checks.
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -15,11 +21,16 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
         go-version: '1.27'
+        # The module has no dependencies and no go.sum, so there is nothing
+        # to cache and the cache restore would only log a warning.
+        cache: false
 
     - name: Verify go.mod is tidy
       run: go mod tidy -diff

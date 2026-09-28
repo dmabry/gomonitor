@@ -3,45 +3,88 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
-
-    - name: Set up Go
-      uses: actions/setup-go@v7
       with:
-        go-version: '1.27'
+        # Full history so the tagged commit can be checked against main.
+        fetch-depth: 0
+        persist-credentials: false
 
-    - name: Verify go.mod is tidy
-      run: go mod tidy -diff
-
-    - name: Check code quality
+    - name: Validate tag
+      id: tag
+      env:
+        TAG: ${{ github.ref_name }}
       run: |
-        unformatted="$(gofmt -l .)"
-        if [ -n "$unformatted" ]; then
-          echo "Files not gofmt-formatted:"
-          echo "$unformatted"
+        # Semantic version with an optional pre-release suffix. Build metadata
+        # (+...) is rejected because Go module versions cannot carry it.
+        if ! printf '%s\n' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+          echo "::error::Tag $TAG is not a semantic version (vMAJOR.MINOR.PATCH[-PRERELEASE])"
           exit 1
         fi
-        go vet ./...
-        go mod verify
 
-    - name: Run tests
-      run: go test -race -cover ./...
+        # Only reviewed code on main is released.
+        commit="$(git rev-parse "refs/tags/$TAG^{commit}")"
+        if ! git merge-base --is-ancestor "$commit" origin/main; then
+          echo "::error::Tag $TAG points at $commit, which is not on main"
+          exit 1
+        fi
 
-    - name: Build
-      run: go build -v ./...
+        # Go requires the module path to end in /vN for major version 2 and
+        # above, and forbids that suffix for v0 and v1; otherwise the release
+        # cannot be fetched with go get.
+        module="$(awk '$1 == "module" { print $2; exit }' go.mod)"
+        major="${TAG#v}"
+        major="${major%%.*}"
+        if [ "$major" -ge 2 ]; then
+          case "$module" in
+            */v"$major") ;;
+            *)
+              echo "::error::Tag $TAG needs module path $module/v$major in go.mod"
+              exit 1
+              ;;
+          esac
+        elif printf '%s\n' "$module" | grep -Eq '/v[0-9]+$'; then
+          echo "::error::Tag $TAG cannot be released from module path $module"
+          exit 1
+        fi
 
+        case "$TAG" in
+          *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+          *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+        esac
+
+  gate:
+    needs: validate
+    uses: ./.github/workflows/go-test.yml
+
+  release:
+    needs: [validate, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only this job can write, and it runs no repository code.
+    permissions:
+      contents: write
+    steps:
     - name: Create GitHub release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+        TAG: ${{ github.ref_name }}
+        PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+      run: |
+        flags=(--verify-tag --generate-notes)
+        if [ "$PRERELEASE" = "true" ]; then
+          flags+=(--prerelease)
+        fi
+        gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
