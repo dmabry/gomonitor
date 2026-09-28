@@ -84,7 +84,16 @@ This is a Go library providing Nagios-compatible monitoring:
 
 ## Releasing a New Version
 
-### Steps to release a new version:
+### Automated release (recommended)
+
+Pushing a tag triggers the workflow at `.github/workflows/release.yml`, which runs the full quality gate (tidy -diff, gofmt, vet, mod verify, `go test -race -cover`, build) and creates the GitHub release with generated notes:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Manual release (fallback)
 
 ```bash
 # 1. Ensure all tests pass
@@ -99,7 +108,7 @@ go mod verify
 git tag v1.0.0
 git push origin v1.0.0
 
-# 4. Create GitHub release with gh CLI (optional but recommended)
+# 4. Create GitHub release with gh CLI
 gh release create v1.0.0 --repo dmabry/gomonitor -t "v1.0.0" -n "$(cat <<'EOF'
 ## Summary
 
