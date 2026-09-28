@@ -22,10 +22,12 @@ go mod tidy                             # Tidy go.mod/go.sum files
 
 ### CI/CD Pipeline
 The GitHub workflow at `.github/workflows/go-test.yml` runs:
-1. `go mod tidy`
-2. Code quality: `gofmt -l .`, `go vet ./...`, `go mod verify`
-3. Tests: `go test ./...`
+1. `go mod tidy -diff` (fails if go.mod/go.sum is un-tidied)
+2. Code quality: `gofmt -l .` (prints unformatted files), `go vet ./...`, `go mod verify`
+3. Tests: `go test -race -cover ./...`
 4. Build: `go build -v ./...`
+
+The job has a 10-minute timeout.
 
 ## Code Style Guidelines
 
