@@ -133,7 +133,19 @@ func (cr *CheckResult) AddPerformanceData(metricName string, metric PerformanceM
 		cr.PerfOrder = []string{}
 	}
 
-	if _, exists := cr.PerformanceData[metricName]; !exists {
+	// PerfOrder is exported and can already contain the name while
+	// PerformanceData does not (e.g. a hand-built result with an order
+	// slice but nil map). Appending unconditionally would register the
+	// name twice and render the metric twice in FormatResult, so scan
+	// the order slice before appending.
+	tracked := false
+	for _, name := range cr.PerfOrder {
+		if name == metricName {
+			tracked = true
+			break
+		}
+	}
+	if _, exists := cr.PerformanceData[metricName]; !exists && !tracked {
 		cr.PerfOrder = append(cr.PerfOrder, metricName)
 	}
 
@@ -234,8 +246,14 @@ func (cr *CheckResult) FormatResult() string {
 
 		// Append performance data to the message. Each metric string ends
 		// with a separator space; the trailing space after the last metric
-		// is trimmed so the output ends cleanly.
-		output = fmt.Sprintf("%s | %s", output, strings.TrimRight(performanceDataStr, " "))
+		// is trimmed so the output ends cleanly. When every PerfOrder
+		// entry was skipped (e.g. all stale after an external
+		// modification), nothing is appended rather than emitting an
+		// empty perfdata section with a dangling '|'.
+		performanceDataStr = strings.TrimRight(performanceDataStr, " ")
+		if performanceDataStr != "" {
+			output = fmt.Sprintf("%s | %s", output, performanceDataStr)
+		}
 	}
 
 	return output

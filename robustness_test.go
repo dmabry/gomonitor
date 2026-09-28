@@ -224,6 +224,50 @@ func TestFormatResult_SkipsStalePerfOrderEntries(t *testing.T) {
 	}
 }
 
+// TestAddPerformanceData_NameTrackedButMapNil pins the duplicate-registration
+// fix: PerfOrder is exported, so a hand-built result can carry an order slice
+// with a nil map. AddPerformanceData used to consult only the map and append
+// the name again, so FormatResult rendered the metric twice. The name must be
+// registered exactly once.
+func TestAddPerformanceData_NameTrackedButMapNil(t *testing.T) {
+	r := &CheckResult{PerfOrder: []string{"cpu"}} // map nil, order pre-populated
+
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+
+	if len(r.PerfOrder) != 1 || r.PerfOrder[0] != "cpu" {
+		t.Errorf("PerfOrder = %v, want [cpu] (no duplicate registration)", r.PerfOrder)
+	}
+	if len(r.PerformanceData) != 1 {
+		t.Errorf("PerformanceData has %d entries, want 1", len(r.PerformanceData))
+	}
+	if got := r.FormatResult(); strings.Count(got, "'cpu'=1.00") != 1 {
+		t.Errorf("FormatResult %q must render 'cpu' exactly once", got)
+	}
+}
+
+// TestFormatResult_AllStaleEntriesOmitsPerfData pins the empty-perfdata fix:
+// when PerformanceData is non-empty but every PerfOrder entry is stale (e.g.
+// after an external modification), FormatResult used to emit a dangling
+// separator ("... | "). Nothing must be appended instead.
+func TestFormatResult_AllStaleEntriesOmitsPerfData(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 1})
+	r.PerfOrder = append(r.PerfOrder[:0], "ghost") // external modification: all stale
+
+	got := r.FormatResult()
+
+	if strings.Contains(got, "ghost") {
+		t.Errorf("FormatResult %q renders stale entry 'ghost'", got)
+	}
+	if strings.Contains(got, "|") {
+		t.Errorf("FormatResult %q emits an empty perfdata section with a dangling '|'", got)
+	}
+	if !strings.HasPrefix(got, "OK: check") {
+		t.Errorf("FormatResult %q lost the message", got)
+	}
+}
+
 // TestDeleteThenReAddKeepsConsistency exercises a delete/re-add cycle across
 // all positions, asserting the map/order invariant every time: PerfOrder and
 // PerformanceData have equal lengths, every ordered name exists in the map,
