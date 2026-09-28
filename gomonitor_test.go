@@ -8,6 +8,10 @@ import (
 	"testing"
 )
 
+// fp returns a pointer to v, for building PerformanceMetric literals with the
+// optional (*float64) threshold fields.
+func new(v float64) *float64 { return &v }
+
 func TestExitCodeString(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -80,10 +84,10 @@ func TestSetResult(t *testing.T) {
 func TestPerformanceData(t *testing.T) {
 	testMetric := PerformanceMetric{
 		Value:  1.23,
-		Warn:   1.00,
-		Crit:   2.00,
-		Min:    0.00,
-		Max:    10.00,
+		Warn:   new(1.00),
+		Crit:   new(2.00),
+		Min:    new(0.00),
+		Max:    new(10.00),
 		UnitOM: "ms",
 	}
 
@@ -96,10 +100,10 @@ func TestPerformanceData(t *testing.T) {
 
 	testMetric2 := PerformanceMetric{
 		Value:  2.34,
-		Warn:   2.00,
-		Crit:   3.00,
-		Min:    1.00,
-		Max:    20.00,
+		Warn:   new(2.00),
+		Crit:   new(3.00),
+		Min:    new(1.00),
+		Max:    new(20.00),
 		UnitOM: "s",
 	}
 	result.UpdatePerformanceData("test", testMetric2)
@@ -186,20 +190,20 @@ func TestFormatResult(t *testing.T) {
 				r := NewCheckResult()
 				r.SetResult(Warning, "High latency detected")
 				r.AddPerformanceData("response_time", PerformanceMetric{
-					Value: 1.23, Warn: 1.00, Crit: 2.00, Min: 0.00, Max: 10.00, UnitOM: "ms",
+					Value: 1.23, Warn: new(1.00), Crit: new(2.00), Min: new(0.00), Max: new(10.00), UnitOM: "ms",
 				})
 				return r
 			},
 			wantOK:   true,
-			contains: []string{"Warning", "High latency detected", "'response_time'=1.23"},
+			contains: []string{"Warning", "High latency detected", "'response_time'=1.230000ms;1;2;0;10"},
 		},
 		{
 			name: "MultiplePerfData_MultiMetrics",
 			setup: func() *CheckResult {
 				r := NewCheckResult()
 				r.SetResult(Critical, "CPU overloaded")
-				r.AddPerformanceData("cpu_usage", PerformanceMetric{Value: 95.0, Warn: 80.0, Crit: 90.0, Min: 0.0, Max: 100.0})
-				r.AddPerformanceData("memory_usage", PerformanceMetric{Value: 88.5, Warn: 85.0, Crit: 95.0, Min: 0.0, Max: 100.0})
+				r.AddPerformanceData("cpu_usage", PerformanceMetric{Value: 95.0, Warn: new(80.0), Crit: new(90.0), Min: new(0.0), Max: new(100.0)})
+				r.AddPerformanceData("memory_usage", PerformanceMetric{Value: 88.5, Warn: new(85.0), Crit: new(95.0), Min: new(0.0), Max: new(100.0)})
 				return r
 			},
 			wantOK:   true,
@@ -280,10 +284,10 @@ func TestFormatResult_StatusPrefixDisabled(t *testing.T) {
 	r2.StatusPrefix = false
 	r2.SetResult(Warning, "High latency")
 	r2.AddPerformanceData("response_time", PerformanceMetric{
-		Value: 1.23, Warn: 1.00, Crit: 2.00, Min: 0.00, Max: 10.00, UnitOM: "ms",
+		Value: 1.23, Warn: new(1.00), Crit: new(2.00), Min: new(0.00), Max: new(10.00), UnitOM: "ms",
 	})
-	if got := r2.FormatResult(); !containsString(got, "High latency | 'response_time'=1.23") {
-		t.Errorf("FormatResult with perfdata got %q, want to contain %q", got, "High latency | 'response_time'=1.23")
+	if got := r2.FormatResult(); !containsString(got, "High latency | 'response_time'=1.230000ms;1;2;0;10") {
+		t.Errorf("FormatResult with perfdata got %q, want to contain %q", got, "High latency | 'response_time'=1.230000ms;1;2;0;10")
 	}
 }
 
@@ -291,11 +295,11 @@ func TestFormatResult_PerformanceData(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "Check passed")
 	r.AddPerformanceData("test_metric", PerformanceMetric{
-		Value: 42.5, Warn: 30.0, Crit: 50.0, Min: 0.0, Max: 100.0, UnitOM: "%",
+		Value: 42.5, Warn: new(30.0), Crit: new(50.0), Min: new(0.0), Max: new(100.0), UnitOM: "%",
 	})
 	output := r.FormatResult()
 
-	wantFormat := "'test_metric'=42.50%;30.00;50.00;0.00;100.00"
+	wantFormat := "'test_metric'=42.500000%;30;50;0;100"
 	if !containsString(output, wantFormat) {
 		t.Errorf("Performance data format incorrect.\nGot: %s\nExpected substring: %s", output, wantFormat)
 	}
@@ -305,12 +309,12 @@ func TestFormatResult_SanitizesPerfData(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check\nok")
 	r.AddPerformanceData("label|with;bad'\nchar", PerformanceMetric{
-		Value: 1.0, Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0, UnitOM: "ms;injected",
+		Value: 1.0, Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0), UnitOM: "ms;injected",
 	})
 
 	got := r.FormatResult()
 
-	wantLabel := "'labelwithbadchar'=1.00msinjected;2.00;3.00;0.00;10.00"
+	wantLabel := "'labelwithbadchar'=1msinjected;2;3;0;10"
 	if !strings.Contains(got, wantLabel) {
 		t.Errorf("FormatResult %q does not contain sanitized perfdata %q", got, wantLabel)
 	}
@@ -333,8 +337,8 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 	}{
 		{
 			name:   "NaN value",
-			metric: PerformanceMetric{Value: math.NaN(), Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0},
-			want:   "'m'=;2.00;3.00;0.00;10.00",
+			metric: PerformanceMetric{Value: math.NaN(), Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
+			want:   "'m'=;2;3;0;10",
 		},
 		{
 			// Pins the unit suppression: a non-finite value with a
@@ -342,13 +346,13 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 			// position ('m'=ms), which corrupts the token for strict
 			// Nagios parsers.
 			name:   "NaN value with unit",
-			metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: 2.0, Crit: 3.0, Min: 0.0, Max: 10.0},
-			want:   "'m'=;2.00;3.00;0.00;10.00",
+			metric: PerformanceMetric{Value: math.NaN(), UnitOM: "ms", Warn: new(2.0), Crit: new(3.0), Min: new(0.0), Max: new(10.0)},
+			want:   "'m'=;2;3;0;10",
 		},
 		{
 			name:   "Infinity thresholds",
-			metric: PerformanceMetric{Value: 1.0, Warn: math.Inf(1), Crit: math.Inf(-1), Min: 0.0, Max: 10.0},
-			want:   "'m'=1.00;;;0.00;10.00",
+			metric: PerformanceMetric{Value: 1.0, Warn: new(math.Inf(1)), Crit: new(math.Inf(-1)), Min: new(0.0), Max: new(10.0)},
+			want:   "'m'=1;;;0;10",
 		},
 	}
 
@@ -372,10 +376,10 @@ func TestFormatResult_NonFinitePerfData(t *testing.T) {
 func TestFormatResult_NoTrailingSpace(t *testing.T) {
 	r := NewCheckResult()
 	r.SetResult(OK, "check")
-	r.AddPerformanceData("m", PerformanceMetric{Value: 1, Warn: 2, Crit: 3, Min: 0, Max: 10})
+	r.AddPerformanceData("m", PerformanceMetric{Value: 1, Warn: new(2), Crit: new(3), Min: new(0), Max: new(10)})
 
 	got := r.FormatResult()
-	want := "OK: check | 'm'=1.00;2.00;3.00;0.00;10.00"
+	want := "OK: check | 'm'=1;2;3;0;10"
 	if got != want {
 		t.Errorf("FormatResult got %q, want %q (output must not end with a trailing space)", got, want)
 	}
@@ -393,6 +397,134 @@ func TestFormatResult_SanitizesMessage(t *testing.T) {
 	want := "OK: forgedpipelinebreak"
 	if got != want {
 		t.Errorf("FormatResult got %q, want %q (message must be stripped of '|', '\\r', '\\n')", got, want)
+	}
+}
+
+// TestFormatResult_LongOutput pins the multi-line output capability: LongOutput
+// is appended after the first line as the long output of the check, following
+// the Nagios/Icinga plugin output convention (Icinga 2 stores short and long
+// output separately via CompatUtility::GetCheckResultOutput and
+// GetCheckResultLongOutput).
+func TestFormatResult_LongOutput(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "CPU usage ok")
+	r.LongOutput = "detail line 1\ndetail line 2"
+	r.AddPerformanceData("cpu", PerformanceMetric{Value: 5, Warn: new(80), Crit: new(90)})
+
+	got := r.FormatResult()
+	want := "OK: CPU usage ok | 'cpu'=5;80;90\ndetail line 1\ndetail line 2"
+	if got != want {
+		t.Errorf("FormatResult got %q, want %q (long output must follow the first line)", got, want)
+	}
+}
+
+// TestFormatResult_LongOutputSanitized pins the long-output sanitization:
+// '\r' and '|' are stripped (a '|' followed by '=' on a long-output line would
+// be parsed as a performance data token by Icinga 2's ParseCheckOutput) and
+// trailing line breaks are trimmed. Interior '\n' line breaks are preserved.
+func TestFormatResult_LongOutputSanitized(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.LongOutput = "line 1|injected=1\r\nline 2\n\n"
+
+	got := r.FormatResult()
+	want := "OK: check\nline 1injected=1\nline 2"
+	if got != want {
+		t.Errorf("FormatResult got %q, want %q (long output must strip '|', '\\r' and trailing '\\n')", got, want)
+	}
+}
+
+// TestFormatResult_EmptyLongOutputOmitted ensures an empty LongOutput does not
+// add a dangling newline to the output.
+func TestFormatResult_EmptyLongOutputOmitted(t *testing.T) {
+	r := NewCheckResult()
+	r.SetResult(OK, "check")
+	r.LongOutput = ""
+
+	if got := r.FormatResult(); got != "OK: check" {
+		t.Errorf("FormatResult got %q, want %q (empty long output must be omitted)", got, "OK: check")
+	}
+}
+
+// TestFormatResult_UnsetThresholds pins the optional-threshold behavior
+// matching Icinga 2's PerfdataValue::Format: unset (nil) thresholds are
+// omitted, so a zero-value metric renders only its value and never emits
+// misleading "0.00" thresholds.
+func TestFormatResult_UnsetThresholds(t *testing.T) {
+	testCases := []struct {
+		name   string
+		metric PerformanceMetric
+		want   string
+	}{
+		{
+			name:   "zero-value metric",
+			metric: PerformanceMetric{Value: 5},
+			want:   "'m'=5",
+		},
+		{
+			name:   "warn and crit only",
+			metric: PerformanceMetric{Value: 5, Warn: new(80), Crit: new(90)},
+			want:   "'m'=5;80;90",
+		},
+		{
+			// Unset warn keeps its position: Icinga 2 emits an empty
+			// field between set fields (";;crit").
+			name:   "crit with unset warn",
+			metric: PerformanceMetric{Value: 5, Crit: new(90)},
+			want:   "'m'=5;;90",
+		},
+		{
+			name:   "min and max only",
+			metric: PerformanceMetric{Value: 5, Min: new(0), Max: new(10)},
+			want:   "'m'=5;;;0;10",
+		},
+		{
+			name:   "warn only",
+			metric: PerformanceMetric{Value: 5, Warn: new(80)},
+			want:   "'m'=5;80",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(OK, "check")
+			r.AddPerformanceData("m", tc.metric)
+
+			if got := r.FormatResult(); !strings.Contains(got, tc.want) {
+				t.Errorf("FormatResult %q does not contain expected perfdata %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatResult_IcingaNumberFormat pins the Icinga 2 numeric rendering
+// (Convert::ToString(double) in lib/base/convert.cpp): whole numbers render
+// without a decimal point and fractional numbers render with six decimal
+// places, so small values are not truncated to "0.00".
+func TestFormatResult_IcingaNumberFormat(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value float64
+		want  string
+	}{
+		{name: "whole number", value: 95, want: "'m'=95"},
+		{name: "fractional", value: 1.23, want: "'m'=1.230000"},
+		{name: "small fractional beyond 2 decimals", value: 0.125, want: "'m'=0.125000"},
+		{name: "negative whole", value: -3, want: "'m'=-3"},
+		{name: "negative fractional", value: -1.5, want: "'m'=-1.500000"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(OK, "check")
+			r.AddPerformanceData("m", PerformanceMetric{Value: tc.value})
+
+			if got := r.FormatResult(); !strings.Contains(got, tc.want) {
+				t.Errorf("FormatResult %q does not contain expected perfdata %q", got, tc.want)
+			}
+		})
 	}
 }
 

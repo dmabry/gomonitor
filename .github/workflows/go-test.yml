@@ -11,6 +11,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
@@ -18,19 +19,24 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
-        go-version: '1.24.4'  # Updated to use Go 1.24.4
+        go-version: '1.27'
 
-    - name: Install dependencies
-      run: go mod tidy
+    - name: Verify go.mod is tidy
+      run: go mod tidy -diff
 
     - name: Check code quality
       run: |
-        test -z "$(gofmt -l .)"
+        unformatted="$(gofmt -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "Files not gofmt-formatted:"
+          echo "$unformatted"
+          exit 1
+        fi
         go vet ./...
         go mod verify
 
     - name: Run tests
-      run: go test ./...
+      run: go test -race -cover ./...
 
     - name: Build the application
       run: go build -v ./...

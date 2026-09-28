@@ -13,7 +13,7 @@ import (
 // metrics added via Update were invisible in output.
 func TestUpdatePerformanceData_NewMetricOnFreshResult(t *testing.T) {
 	r := NewCheckResult()
-	r.UpdatePerformanceData("disk", PerformanceMetric{Value: 42, Warn: 80, Crit: 90, Min: 0, Max: 100})
+	r.UpdatePerformanceData("disk", PerformanceMetric{Value: 42, Warn: new(80), Crit: new(90), Min: new(0), Max: new(100)})
 
 	if len(r.PerformanceData) != 1 {
 		t.Errorf("PerformanceData has %d entries, want 1", len(r.PerformanceData))
@@ -23,7 +23,7 @@ func TestUpdatePerformanceData_NewMetricOnFreshResult(t *testing.T) {
 	}
 
 	got := r.FormatResult()
-	if !strings.Contains(got, "'disk'=42.00") {
+	if !strings.Contains(got, "'disk'=42") {
 		t.Errorf("FormatResult %q does not contain the updated metric", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestUpdatePerformanceData_NilMapNoPanic(t *testing.T) {
 	if len(r.PerfOrder) != 1 || r.PerfOrder[0] != "mem" {
 		t.Errorf("PerfOrder = %v, want [mem]", r.PerfOrder)
 	}
-	if got := r.FormatResult(); !strings.Contains(got, "'mem'=55.00") {
+	if got := r.FormatResult(); !strings.Contains(got, "'mem'=55") {
 		t.Errorf("FormatResult %q does not contain the metric", got)
 	}
 }
@@ -67,11 +67,11 @@ func TestUpdatePerformanceData_ExistingMetricKeepsOrder(t *testing.T) {
 	}
 
 	got := r.FormatResult()
-	if !strings.Contains(got, "'cpu'=33.00") {
-		t.Errorf("FormatResult %q does not contain the updated value 33.00", got)
+	if !strings.Contains(got, "'cpu'=33") {
+		t.Errorf("FormatResult %q does not contain the updated value 33", got)
 	}
-	if strings.Contains(got, "'cpu'=10.00") {
-		t.Errorf("FormatResult %q still contains the stale value 10.00", got)
+	if strings.Contains(got, "'cpu'=10") {
+		t.Errorf("FormatResult %q still contains the stale value 10", got)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestUpdatePerformanceData_MatchesAddPerformanceData(t *testing.T) {
 		name string
 		met  PerformanceMetric
 	}{
-		{"cpu", PerformanceMetric{Value: 1, Warn: 2, Crit: 3, Min: 0, Max: 4, UnitOM: "%"}},
+		{"cpu", PerformanceMetric{Value: 1, Warn: new(2), Crit: new(3), Min: new(0), Max: new(4), UnitOM: "%"}},
 		{"disk", PerformanceMetric{Value: 5}},
 		{"cpu", PerformanceMetric{Value: 9}},
 	} {

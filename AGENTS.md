@@ -22,10 +22,12 @@ go mod tidy                             # Tidy go.mod/go.sum files
 
 ### CI/CD Pipeline
 The GitHub workflow at `.github/workflows/go-test.yml` runs:
-1. `go mod tidy`
-2. Code quality: `gofmt -l .`, `go vet ./...`, `go mod verify`
-3. Tests: `go test ./...`
+1. `go mod tidy -diff` (fails if go.mod/go.sum is un-tidied)
+2. Code quality: `gofmt -l .` (prints unformatted files), `go vet ./...`, `go mod verify`
+3. Tests: `go test -race -cover ./...`
 4. Build: `go build -v ./...`
+
+The job has a 10-minute timeout.
 
 ## Code Style Guidelines
 
@@ -77,7 +79,7 @@ This is a Go library providing Nagios-compatible monitoring:
 
 ## Version & Compatibility
 
-- Go version: 1.24.4 (from go.mod)
+- Go version: 1.27 (from go.mod)
 - CI uses Ubuntu latest with actions/checkout@v7, actions/setup-go@v7
 
 ## Releasing a New Version

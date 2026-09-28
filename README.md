@@ -14,6 +14,7 @@ gomonitor provides a framework for creating monitoring checks that follow the Na
   - [Basic Example](#basic-example)
   - [Adding Performance Data](#adding-performance-data)
   - [Command-line Options and Verbose Output](#command-line-options-and-verbose-output)
+  - [Long Output](#long-output)
   - [Complete Example: Load Average Check](#complete-example-load-average-check)
 - [API Reference](#api-reference)
   - [ExitCode](#exitcode)
@@ -108,13 +109,16 @@ func main() {
     // Create a new check result
     result := gomonitor.NewCheckResult()
 
-    // Add performance data
+    // Add performance data. Warn, Crit, Min and Max are *float64 fields;
+    // nil (or an omitted field) means the threshold is unset and it is
+    // omitted from the output, matching Icinga 2.
+    warn, crit, min, max := 1.00, 2.00, 0.00, 10.00
     metric := gomonitor.PerformanceMetric{
         Value:  1.23,
-        Warn:   1.00,
-        Crit:   2.00,
-        Min:    0.00,
-        Max:    10.00,
+        Warn:   &warn,
+        Crit:   &crit,
+        Min:    &min,
+        Max:    &max,
         UnitOM: "ms",
     }
     result.AddPerformanceData("response_time", metric)
@@ -166,10 +170,8 @@ func main() {
     // Add performance data
     metric := gomonitor.PerformanceMetric{
         Value:  value,
-        Warn:   warningThreshold,
-        Crit:   criticalThreshold,
-        Min:    0,
-        Max:    100,
+        Warn:   &warningThreshold,
+        Crit:   &criticalThreshold,
         UnitOM: "",
     }
     result.AddPerformanceData("metric_name", metric)
@@ -198,6 +200,22 @@ fmt.Println(result.FormatResult()) // "[Warning] High latency (95% sure)"
 ```
 
 If your message already carries its own status prefix (e.g. `"OK: Everything is fine"`), set `StatusPrefix` to `false` to avoid doubling it. Note that performance data is appended to the output automatically, so you should **not** add a `| %s` verb to your `Format` string.
+
+### Long Output
+
+Nagios/Icinga plugin output has two parts: the first line is the short output (message and performance data), and every subsequent line is the long output. Set the `LongOutput` field to emit multi-line output:
+
+```go
+result := gomonitor.NewCheckResult()
+result.SetResult(gomonitor.OK, "CPU usage ok")
+result.LongOutput = "Detail: 5 cores\nDetail: load average 0.5"
+fmt.Println(result.FormatResult())
+// OK: CPU usage ok
+// Detail: 5 cores
+// Detail: load average 0.5
+```
+
+`LongOutput` is sanitized when rendered: `\r` and `|` are stripped (a `|` followed by `=` on a long-output line would be parsed as performance data by Icinga 2's `ParseCheckOutput`) and trailing line breaks are trimmed; `\n` is preserved as the line separator.
 
 ### Complete Example: Load Average Check
 
@@ -272,10 +290,8 @@ func main() {
     // Add performance data
     metric := gomonitor.PerformanceMetric{
         Value:  loadAvg,
-        Warn:   warningThreshold,
-        Crit:   criticalThreshold,
-        Min:    0,
-        Max:    100, // Example max value
+        Warn:   &warningThreshold,
+        Crit:   &criticalThreshold,
         UnitOM: "",
     }
     result.AddPerformanceData("load1", metric)
@@ -310,6 +326,7 @@ The `CheckResult` type represents the result of a monitoring check.
 type CheckResult struct {
     ExitCode        // embedded Nagios exit code (also provides String() via promotion)
     Message         string
+    LongOutput      string // optional multi-line long output, rendered after the first line
     PerfOrder       []string
     PerformanceData map[string]gomonitor.PerformanceMetric
     Format          string
@@ -334,14 +351,16 @@ The `PerformanceMetric` type represents a performance metric.
 
 ```go
 type PerformanceMetric struct {
-    Value  float64 // The actual value of the metric
-    Warn   float64 // Threshold for warning state
-    Crit   float64 // Threshold for critical state
-    Min    float64 // Minimum expected value of the metric
-    Max    float64 // Maximum expected value of the metric
-    UnitOM string  // Unit of measure for the metric (e.g., "ms", "%", etc.)
+    Value  float64  // The actual value of the metric
+    Warn   *float64 // Threshold for warning state (nil to omit)
+    Crit   *float64 // Threshold for critical state (nil to omit)
+    Min    *float64 // Minimum expected value of the metric (nil to omit)
+    Max    *float64 // Maximum expected value of the metric (nil to omit)
+    UnitOM string   // Unit of measure for the metric (e.g., "ms", "%", etc.)
 }
 ```
+
+Unset (nil) thresholds are omitted from the output, matching Icinga 2's `PerfdataValue` behavior: a metric with only `Warn` and `Crit` set renders `'m'=5;80;90`, and a zero-value metric renders `'m'=5` without any threshold fields. Numeric fields render the way Icinga 2 formats doubles: whole numbers without a decimal point (`'m'=95`) and fractional numbers with six decimal places (`'m'=1.230000`).
 
 ## Contributing
 
