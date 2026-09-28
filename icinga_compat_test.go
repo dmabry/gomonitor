@@ -268,3 +268,71 @@ func TestFormatResult_EmptyFormatUsesDefault(t *testing.T) {
 		t.Errorf("FormatResult() = %q, want %q", got, want)
 	}
 }
+
+// TestFormatResult_QuotedLabelSurvivesDoubleUnquote pins labels that start and
+// end with "'". Icinga strips one pair of outer quotes in SplitPerfdata, which
+// re-quotes the label only when it contains a space, and PerfdataValue::Parse
+// strips another pair, so such a label without a space needs two pairs of
+// quotes to be stored as written.
+func TestFormatResult_QuotedLabelSurvivesDoubleUnquote(t *testing.T) {
+	testCases := []struct {
+		label string
+		want  string
+	}{
+		{label: "'ab'", want: "'''ab'''=1"},
+		{label: "'a'", want: "'''a'''=1"},
+		{label: "'a b'", want: "''a b''=1"},
+		{label: "''", want: "''''=1"},
+		{label: "'ab", want: "''ab'=1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.label, func(t *testing.T) {
+			r := NewCheckResult()
+			r.SetResult(OK, "check")
+			r.AddPerformanceData(tc.label, PerformanceMetric{Value: 1})
+			if got := r.FormatResult(); got != "OK: check | "+tc.want {
+				t.Errorf("FormatResult() = %q, want perfdata %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatResult_BlankShortOutputIsASCIIWhitespace pins that only ASCII
+// whitespace counts as blank, matching Icinga's boost::algorithm::trim in the
+// classic locale: a message of U+00A0 is kept as the short output.
+func TestFormatResult_BlankShortOutputIsASCIIWhitespace(t *testing.T) {
+	r := NewCheckResult()
+	r.StatusPrefix = false
+	r.SetResult(OK, " ")
+	r.LongOutput = "d"
+	if got, want := r.FormatResult(), " \nd"; got != want {
+		t.Errorf("FormatResult() = %+q, want %+q", got, want)
+	}
+}
+
+// TestFormatResult_FormatTemplateSanitized pins that the Format template
+// cannot corrupt the output either: a '|' in it would become Icinga's
+// perfdata delimiter (ParseCheckOutput splits at the first '|' followed by
+// an '='), and a line break would move the message into the long output.
+func TestFormatResult_FormatTemplateSanitized(t *testing.T) {
+	testCases := []struct {
+		format string
+		want   string
+	}{
+		{format: "%s | %s", want: "OK  msg | 'a'=1"},
+		{format: "\n%s: %s\r", want: "OK: msg | 'a'=1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.format, func(t *testing.T) {
+			r := NewCheckResult()
+			r.Format = tc.format
+			r.SetResult(OK, "msg")
+			r.AddPerformanceData("a", PerformanceMetric{Value: 1})
+			if got := r.FormatResult(); got != tc.want {
+				t.Errorf("FormatResult() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

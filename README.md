@@ -31,7 +31,7 @@ gomonitor provides a simple and flexible framework for creating monitoring plugi
 
 - Standardized Nagios-compatible exit codes (OK, Warning, Critical, Unknown)
 - Support for performance data in a format compatible with Nagios and other monitoring systems
-- Output verified against Icinga 2's plugin output parser, so Icinga stores exactly the values, units, and labels you set
+- Output checked against Icinga 2's plugin output parser, so Icinga stores the values, units, and labels you set (with the few exceptions listed under [Performance Data and Icinga 2](#performance-data-and-icinga-2))
 - Easy-to-use API for creating check results, adding performance metrics, and outputting results
 - Comprehensive test suite to ensure reliability
 - Support for command-line options and verbose output levels
@@ -226,10 +226,10 @@ If the first line would be blank (for example `StatusPrefix` is `false` and `Mes
 
 ### Performance Data and Icinga 2
 
-Performance data is rendered so that Icinga 2 (`PluginUtility::SplitPerfdata` and `PerfdataValue::Parse`) reads back exactly what you set:
+Performance data is rendered so that Icinga 2 (`PluginUtility::SplitPerfdata` and `PerfdataValue::Parse`) reads back what you set. The exceptions are listed here: `=` and line breaks in labels, units Icinga cannot parse, non-finite numbers, and `::` prefixes.
 
 - **Numbers are lossless.** Values and thresholds render in the shortest decimal form that parses back to the same `float64`, never in exponent notation: `'rta'=30.54009269051229ms`, `'m'=0.00000025`, `'m'=95`. `NaN` and `±Inf` render as an empty field (Icinga rejects them either way).
-- **Labels** are always quoted. `=` and line breaks are stripped (Icinga ends a label at the first `=`); every other character is kept, including spaces, `'`, `;`, and `|`. A metric whose label is empty after sanitizing is not rendered.
+- **Labels** are always quoted. `=` and line breaks are stripped (Icinga ends a label at the first `=`); every other character is kept, including spaces, `'`, `;`, and `|`. A label that itself starts and ends with `'` gets a second pair of quotes, because Icinga unquotes labels twice. A metric whose label is empty after sanitizing is not rendered. Note that the Nagios plugin guidelines forbid `'` in labels; Icinga handles it, but other Nagios-ecosystem parsers may not.
 - **Units** Icinga cannot read back are dropped whole, the same way Icinga drops units it does not recognize: a unit containing a digit, `.`, `,`, `;`, `=`, or whitespace (e.g. `"1/s"`, `"k B"`, `"m3"`) renders the value without a unit.
 - **`::` labels** are check_multi prefixes to Icinga: once a label containing `::` is rendered, every following label without `::` is stored with that prefix (`app::rta` followed by `load` is stored as `app::load`). When mixing the two, give every label a prefix or add the unprefixed metrics first.
 
@@ -384,7 +384,7 @@ type CheckResult struct {
 - `AddPerformanceData(metricName string, metric PerformanceMetric)` - Adds a performance metric to the check result
 - `UpdatePerformanceData(metricName string, metric PerformanceMetric)` - Adds or updates a performance metric. For a new metric name the metric is registered and appears in the output (identical to `AddPerformanceData`); for an existing name the value is replaced in place and its position in the output order is preserved.
 - `DeletePerformanceData(metricName string)` - Deletes a performance metric from the check result; the remaining metrics keep their order
-- `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally, and `%%` collapses to a single `%` for backward compatibility. To keep single-line output well-formed, the message is stripped of newlines and `|`. Labels are stripped of `=` and newlines, and units Icinga cannot read back are dropped (see [Performance Data and Icinga 2](#performance-data-and-icinga-2)).
+- `FormatResult() string` - Formats the check result message with performance data (does not exit). The `Format` template supports two `%s` verbs (status, message); other `%` characters are preserved literally, and `%%` collapses to a single `%` for backward compatibility. To keep single-line output well-formed, the first line (message and `Format` template) is stripped of newlines and `|`. Labels are stripped of `=` and newlines, and units Icinga cannot read back are dropped (see [Performance Data and Icinga 2](#performance-data-and-icinga-2)).
 - `SendResult()` - Outputs the formatted message and exits with the appropriate exit code. **Caution:** `os.Exit` skips deferred cleanup in the calling program; use `ResultCode()` and print `FormatResult()` yourself when deferred functions must run.
 - `ResultCode() int` - Returns the integer exit code for the check result without printing or exiting, so callers can control termination (e.g. let their own defer run) instead of relying on `SendResult()`. Codes outside 0–3 return 3 (Unknown).
 

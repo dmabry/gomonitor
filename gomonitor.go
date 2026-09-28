@@ -225,13 +225,14 @@ func (cr *CheckResult) DeletePerformanceData(metricName string) {
 // escaping the percent as "%%". For backward compatibility, an explicit
 // "%%" in the template is still collapsed to a single "%". An empty Format
 // uses the default "%s: %s"; a template with no %s verb is rendered as-is,
-// without the message.
+// without the message. The rendered line, template included, is stripped of
+// '|' and line breaks like the message.
 //
 // An ExitCode outside OK..Unknown renders as "Unknown", the state Icinga
 // records for it.
 func (cr *CheckResult) FormatResult() string {
 	status := cr.state().String()
-	output := sanitizeMessage(cr.Message)
+	output := cr.Message
 	if cr.StatusPrefix {
 		format := cr.Format
 		if format == "" {
@@ -239,9 +240,14 @@ func (cr *CheckResult) FormatResult() string {
 		}
 		output = formatTemplate(format, status, output)
 	}
+	// Sanitize after templating so a '|' or line break in the Format
+	// template cannot corrupt the output any more than one in the message.
+	output = sanitizeMessage(output)
 
+	// Icinga trims the output with boost::algorithm::trim in the classic
+	// locale, so only ASCII whitespace makes the first line blank.
 	long := sanitizeLongOutput(cr.LongOutput)
-	if long != "" && strings.TrimSpace(output) == "" {
+	if long != "" && strings.Trim(output, asciiSpace) == "" {
 		output = status
 	}
 
@@ -290,13 +296,15 @@ func (cr *CheckResult) FormatResult() string {
 // canonical unit and rendered exactly as Icinga 2's PerfdataValue::Format
 // would render it (formatIcingaFloat).
 func (m PerformanceMetric) format(label string, normalize bool) string {
-	unit := perfUnit(m.UnitOM)
+	var unit string
 	formatFloat := formatPerfFloat
 	if normalize {
 		// Normalization derives the unit from the Icinga 2 UoM tables in
 		// uom.go; units Icinga cannot parse are unknown there and dropped.
 		m, unit = m.normalized()
 		formatFloat = formatIcingaFloat
+	} else {
+		unit = perfUnit(m.UnitOM)
 	}
 
 	value := formatFloat(m.Value)
@@ -307,7 +315,20 @@ func (m PerformanceMetric) format(label string, normalize bool) string {
 		unit = ""
 	}
 
-	return "'" + label + "'=" + value + unit + formatThresholds(formatFloat, m.Warn, m.Crit, m.Min, m.Max)
+	return quoteLabel(label) + "=" + value + unit + formatThresholds(formatFloat, m.Warn, m.Crit, m.Min, m.Max)
+}
+
+// quoteLabel wraps a sanitized label in single quotes so that Icinga 2 stores
+// it unchanged. Icinga unquotes twice: SplitPerfdata strips one pair of outer
+// quotes and re-quotes the label only if it contains a space, then
+// PerfdataValue::Parse strips outer quotes again from any label longer than
+// two characters. A label without a space that itself starts and ends with
+// "'" therefore needs a second pair.
+func quoteLabel(label string) string {
+	if len(label) > 2 && label[0] == '\'' && label[len(label)-1] == '\'' && !strings.Contains(label, " ") {
+		return "''" + label + "''"
+	}
+	return "'" + label + "'"
 }
 
 // state returns the exit code Icinga records for the result. Icinga maps every
@@ -331,6 +352,9 @@ func (cr *CheckResult) state() ExitCode {
 func sanitizeLongOutput(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.TrimRight(s, "\n")
+	if !strings.Contains(s, "|") {
+		return s
+	}
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		if eq := strings.LastIndexByte(line, '='); eq > 0 {
@@ -339,6 +363,10 @@ func sanitizeLongOutput(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// asciiSpace is the whitespace set of the C classic locale, which Icinga 2's
+// boost string algorithms use.
+const asciiSpace = " \t\n\v\f\r"
 
 // sanitizeMessage strips characters from a plugin message that would break
 // single-line Nagios output or allow output injection through the message:
@@ -354,9 +382,9 @@ func sanitizeMessage(s string) string {
 
 // sanitizeLabel strips the characters Icinga 2 cannot carry in a perfdata
 // label. SplitPerfdata ends the label at the first '=', and a line break
-// would end the perfdata line. Everything else round-trips: the label is
-// wrapped in single quotes and Icinga strips only the outer pair, so an inner
-// "'" survives, ';' is harmless before the last '=', and '|' is harmless after
+// would end the perfdata line. Everything else round-trips: quoteLabel wraps
+// the label so that Icinga's unquoting leaves it intact, an inner "'"
+// survives, ';' is harmless before the last '=', and '|' is harmless after
 // the perfdata delimiter.
 func sanitizeLabel(s string) string {
 	s = strings.ReplaceAll(s, "=", "")
@@ -373,7 +401,7 @@ func sanitizeLabel(s string) string {
 // is dropped whole, which is how Icinga treats units it does not recognize,
 // rather than stripped into a different unit ("k B" is not "kB").
 func perfUnit(unit string) string {
-	if strings.ContainsAny(unit, "0123456789.,;= \t\n\v\f\r") {
+	if strings.ContainsAny(unit, "0123456789.,;="+asciiSpace) {
 		return ""
 	}
 	return unit
